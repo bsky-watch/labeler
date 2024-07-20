@@ -77,13 +77,16 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 				futureCursor = true
 				return nil
 			}
-			if !bytes.Equal(key, encodeKey(cursor)) {
+			if !bytes.Equal(key, encodeKey(cursor)) && len(value) > 0 {
 				if err := s.sendLabel(ctx, conn, key, value); err != nil {
 					return err
 				}
 			}
 			lastKey = key
 			for key, value = c.Next(); key != nil; key, value = c.Next() {
+				if len(value) == 0 {
+					continue
+				}
 				if err := s.sendLabel(ctx, conn, key, value); err != nil {
 					return err
 				}

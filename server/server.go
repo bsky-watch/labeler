@@ -69,6 +69,12 @@ func (s *Server) replayStream(ctx context.Context) error {
 	log.Info().Msgf("Loading database from disk...")
 	err := s.db.View(func(tx *bolt.Tx) error {
 		return tx.Bucket([]byte(bucketName)).ForEach(func(k, v []byte) error {
+			if len(v) == 0 {
+				// XXX: skipping empty padding entries, used only when replacing
+				// software for existing labeler.
+				return nil
+			}
+
 			entry := &Entry{}
 			if err := json.Unmarshal(v, entry); err != nil {
 				return err
@@ -185,4 +191,20 @@ func (s *Server) wakeUpSubs() {
 		}
 	}
 	s.mu.Unlock()
+}
+
+func (s *Server) DoNotUseUnlessYouKnowWhatYoureDoing_BumpLastKeyTo(n int64) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+		c := b.Cursor()
+		key, _ := c.Last()
+		k, err := decodeKey(key)
+		if err != nil {
+			return err
+		}
+		if k < n {
+			return b.Put(encodeKey(n), []byte{})
+		}
+		return fmt.Errorf("already have key %d >= %d", k, n)
+	})
 }

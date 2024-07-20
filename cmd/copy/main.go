@@ -24,6 +24,7 @@ import (
 var (
 	configFile = flag.String("config", "config.yaml", "Path to the config file")
 	endpoint   = flag.String("from", "", "URL of the labeler to copy the labels from")
+	unsafe     = flag.Bool("unsafe", false, "Allow unsafe operations")
 )
 
 func runMain(ctx context.Context) error {
@@ -66,6 +67,7 @@ func runMain(ctx context.Context) error {
 		return fmt.Errorf("connecting to %s: %w", u.String(), err)
 	}
 
+	var lastSeq int64
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 			return fmt.Errorf("setting read deadline: %w", err)
@@ -101,8 +103,16 @@ func runMain(ctx context.Context) error {
 				fmt.Printf("The above label had no effect.\n")
 			}
 		}
+		lastSeq = labels.Seq
 	}
 	conn.Close()
+
+	if *unsafe {
+		err := server.DoNotUseUnlessYouKnowWhatYoureDoing_BumpLastKeyTo(lastSeq)
+		if err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
