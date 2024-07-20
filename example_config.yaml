@@ -15,6 +15,9 @@ did:
 # if you try to apply an unknown label. It also can update your labeler profile info,
 # if you also specify a password below.
 labels:
+  # The labeler automatically adds identifiers from labelValueDefinitions to labelValues,
+  # if they're not listed.
+  # This means that most of the time you can completely omit specifying labelValues.
   labelValues:
     - dmca-violation
   labelValueDefinitions:
