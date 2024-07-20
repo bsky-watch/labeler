@@ -1,5 +1,8 @@
 .git
 .gitignore
 *.yaml
+*.yml
 LICENSE
 *.md
+.env
+*.env

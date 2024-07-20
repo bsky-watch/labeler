@@ -36,3 +36,7 @@ labels:
 # and signing key in PLC. `did` field above should be provided too.
 password:
 endpoint:
+
+# Used only by list-labeler. Labeled accounts will be kept in sync with the list.
+lists:
+  elder: "at://.../app.bsky.graph.list/..."
