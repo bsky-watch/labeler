@@ -92,7 +92,7 @@ func runMain(ctx context.Context) error {
 			if label.Neg != nil && *label.Neg {
 				op = "-"
 			}
-			fmt.Printf("%s %s\t%s\n", op, label.Uri, label.Val)
+			fmt.Printf("%s %d\t%s\t%s\n", op, labels.Seq, label.Uri, label.Val)
 			changed, err := server.AddLabel(*label)
 			if err != nil {
 				return fmt.Errorf("writing label: %w", err)
