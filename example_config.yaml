@@ -1,0 +1,31 @@
+# Label signing key. Required.
+# Same as with Ozone, generate with: openssl ecparam --name secp256k1 --genkey --noout --outform DER | tail --bytes=+8 | head --bytes=32 | xxd --plain --cols 32
+private_key: 24cdb7ab5f04f501c05f5bdffa33033df24109b1fb676b0d1a6793b7ec06d7e3
+
+# Labeler's DID. Optional.
+# If not set, must be provided in each labeling request.
+did:
+
+# Labeler doesn't necessarily need to know your label definitions, it will happily
+# apply any label you tell it to. But if you do provide them, it will return an error
+# if you try to apply an unknown label. It also can update your labeler profile info,
+# if you also specify a password below.
+labels:
+  labelValues:
+    - dmca-violation
+  labelValueDefinitions:
+  # For reference see https://github.com/bluesky-social/atproto/blob/main/lexicons/com/atproto/label/defs.json#L78
+    - identifier: elder
+      severity: alert
+      blurs: none
+      defaultSetting: warn
+      adultOnly: true
+      locales:
+        - lang: en
+          name: Bluesky Elder
+          description: 'Warning: Bluesky Elder'
+
+# Stuff below is only required for updating your label definitions
+# and signing key in PLC. `did` field above should be provided too.
+password:
+endpoint:
