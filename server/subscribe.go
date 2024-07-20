@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
@@ -120,32 +121,51 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 			return
 		}
 	}
+	err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
+	if err != nil {
+		log.Error().Err(err).Msgf("Ping failed: %s", err)
+		conn.Close()
+		return
+	}
 
-	for range wakeCh {
-		log.Trace().Msgf("Waking up")
-		err := s.db.View(func(tx *bolt.Tx) error {
-			c := tx.Bucket([]byte(bucketName)).Cursor()
-			var key, value []byte
-			if lastKey != nil {
-				key, value = c.Seek(lastKey)
-				if bytes.Equal(key, lastKey) {
-					// We've already sent this label, so advance to the next one.
-					key, value = c.Next()
-				}
-			} else {
-				key, value = c.First()
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
+			if err != nil {
+				log.Error().Err(err).Msgf("Ping failed: %s", err)
+				conn.Close()
+				return
 			}
-			for ; key != nil; key, value = c.Next() {
-				if err := s.sendLabel(ctx, conn, key, value); err != nil {
-					return err
+		case <-wakeCh:
+			log.Trace().Msgf("Waking up")
+			err := s.db.View(func(tx *bolt.Tx) error {
+				c := tx.Bucket([]byte(bucketName)).Cursor()
+				var key, value []byte
+				if lastKey != nil {
+					key, value = c.Seek(lastKey)
+					if bytes.Equal(key, lastKey) {
+						// We've already sent this label, so advance to the next one.
+						key, value = c.Next()
+					}
+				} else {
+					key, value = c.First()
 				}
-				lastKey = key
+				for ; key != nil; key, value = c.Next() {
+					if err := s.sendLabel(ctx, conn, key, value); err != nil {
+						return err
+					}
+					lastKey = key
+				}
+				return nil
+			})
+			if err != nil {
+				conn.Close()
+				return
 			}
-			return nil
-		})
-		if err != nil {
-			conn.Close()
-			break
 		}
 	}
 }
