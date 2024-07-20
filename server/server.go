@@ -210,6 +210,41 @@ func (s *Server) wakeUpSubs() {
 	s.mu.Unlock()
 }
 
+func ptr[T any](v T) *T { return &v }
+
+// LabelEntries returns all non-negated label entries for the provided label name.
+// Does not filter out expired entries.
+func (s *Server) LabelEntries(ctx context.Context, labelName string) ([]comatproto.LabelDefs_Label, error) {
+	r := []comatproto.LabelDefs_Label{}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, uris := range s.labels {
+		for _, labels := range uris {
+			for _, entry := range labels[labelName] {
+				// Make a copy of pointer fields to ensure that changing the returned entries
+				// will not affect our internal state.
+				if entry.Cid != nil {
+					entry.Cid = ptr(*entry.Cid)
+				}
+				if entry.Exp != nil {
+					entry.Exp = ptr(*entry.Exp)
+				}
+				if entry.Neg != nil {
+					entry.Neg = ptr(*entry.Neg)
+				}
+				if entry.Ver != nil {
+					entry.Ver = ptr(*entry.Ver)
+				}
+
+				r = append(r, comatproto.LabelDefs_Label(entry))
+			}
+		}
+	}
+
+	return r, nil
+}
+
 func (s *Server) DoNotUseUnlessYouKnowWhatYoureDoing_BumpLastKeyTo(n int64) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketName))
