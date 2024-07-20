@@ -15,13 +15,13 @@ import (
 	"bsky.watch/labeler/sign"
 )
 
-type queryRequest struct {
+type queryRequestGet struct {
 	UriPatterns []string `schema:"uriPatterns"`
 	Sources     []string `schema:"sources"`
 	// Ignoring `limit` and `cursor`
 }
 
-func (q *queryRequest) Validate() error {
+func (q *queryRequestGet) Validate() error {
 	if len(q.UriPatterns) == 0 {
 		return fmt.Errorf("need at least one pattern")
 	}
@@ -44,7 +44,7 @@ func (q *queryRequest) Validate() error {
 	return nil
 }
 
-func (q *queryRequest) Match(entry *Entry) bool {
+func (q *queryRequestGet) Match(entry *Entry) bool {
 	if len(q.Sources) > 0 {
 		if !slices.Contains(q.Sources, entry.Src) {
 			return false
@@ -54,7 +54,7 @@ func (q *queryRequest) Match(entry *Entry) bool {
 }
 
 func (s *Server) Query() http.Handler {
-	return convreq.Wrap(func(ctx context.Context, get queryRequest) convreq.HttpResponse {
+	return convreq.Wrap(func(ctx context.Context, get queryRequestGet) convreq.HttpResponse {
 		if err := get.Validate(); err != nil {
 			return respond.BadRequest(err.Error())
 		}

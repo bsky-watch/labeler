@@ -23,8 +23,10 @@ func New(server *server.Server) *Handler {
 	return h
 }
 
-func (h *Handler) serve(ctx context.Context, postJSON *comatproto.LabelDefs_Label) convreq.HttpResponse {
-	changed, err := h.server.AddLabel(*postJSON)
+type label_JSON comatproto.LabelDefs_Label
+
+func (h *Handler) serve(ctx context.Context, post label_JSON) convreq.HttpResponse {
+	changed, err := h.server.AddLabel(comatproto.LabelDefs_Label(post))
 	if err != nil {
 		return respond.BadRequest(err.Error())
 	}
