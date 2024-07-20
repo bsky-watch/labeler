@@ -4,7 +4,7 @@ db_file: /data/labels.bolt
 
 # Label signing key. Required.
 # Same as with Ozone, generate with: openssl ecparam --name secp256k1 --genkey --noout --outform DER | tail --bytes=+8 | head --bytes=32 | xxd --plain --cols 32
-private_key: 24cdb7ab5f04f501c05f5bdffa33033df24109b1fb676b0d1a6793b7ec06d7e3
+private_key:
 
 # Labeler's DID. Optional.
 # If not set, must be provided in each labeling request.

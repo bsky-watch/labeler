@@ -1,0 +1,10 @@
+services:
+  labeler:
+    ports:
+      - "${ADMIN_ADDR:-0.0.0.0:8081}:8081"
+    command: [
+      "--config=/config.yaml",
+      "--log-level=0",
+      "--listen-addr=:8080",
+      "--admin-addr=:8081",
+    ]

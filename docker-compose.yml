@@ -1,0 +1,15 @@
+services:
+  labeler:
+    build: .
+    restart: always
+    image: bsky.watch/labeler
+    volumes:
+      - "${DATA_DIR:?Specify DATA_DIR in .env file}:/data:rw"
+      - "${CONFIG_FILE:-./config.yaml}:/config.yaml:ro"
+    ports:
+      - "${LISTEN_ADDR:-0.0.0.0:8080}:8080"
+    command: [
+      "--config=/config.yaml",
+      "--log-level=0",
+      "--listen-addr=:8080",
+    ]
