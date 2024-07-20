@@ -12,6 +12,8 @@ import (
 	"bsky.watch/utils/plc"
 )
 
+// UpdateSigningKeyAndEndpoint updates labeler's public key and (optionally) endpoint,
+// if the current values in PLC are different.
 func UpdateSigningKeyAndEndpoint(ctx context.Context, client *xrpc.Client, token string, publicKey string, endpoint string) error {
 	session, err := comatproto.ServerGetSession(ctx, client)
 	if err != nil {

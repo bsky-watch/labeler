@@ -1,3 +1,14 @@
+// Package server implements an ATproto labeler, using [bbolt](https://github.com/etcd-io/bbolt) as storage.
+//
+// Example usage:
+//
+//	    server, err := server.New(ctx, config.DBFile, config.DID, key)
+//	    if err != nil {
+//		       return fmt.Errorf("instantiating a server: %w", err)
+//	    }
+//	    http.Handle("/xrpc/com.atproto.label.subscribeLabels", server.Subscribe())
+//	    http.Handle("/xrpc/com.atproto.label.queryLabels", server.Query())
+//	    http.ListenAndServe(":8080", nil)
 package server
 
 import (
@@ -26,6 +37,7 @@ type Server struct {
 	wakeChans []chan struct{}
 }
 
+// New creates and returns a new server instance.
 func New(ctx context.Context, path string, did string, key *secec.PrivateKey) (*Server, error) {
 	if key == nil {
 		return nil, fmt.Errorf("signing key is required")
@@ -94,6 +106,11 @@ func (s *Server) replayStream(ctx context.Context) error {
 	return nil
 }
 
+// AddLabel updates the internal state and writes the label to the database.
+//
+// Note that it will ignore values that have no effect (e.g., if the label already exists,
+// or trying to negate a label that doesn't exist). Return value indicates if
+// there was a change or not.
 func (s *Server) AddLabel(label comatproto.LabelDefs_Label) (bool, error) {
 	if label.Src == "" {
 		label.Src = s.did

@@ -11,6 +11,8 @@ import (
 	"github.com/bluesky-social/indigo/xrpc"
 )
 
+// UpdateLabelDefs checks if labeler policy of the account that `client` is logged in with
+// is the same as `defs`. If it doesn't - it will try to update it.
 func UpdateLabelDefs(ctx context.Context, client *xrpc.Client, defs *bsky.LabelerDefs_LabelerPolicies) error {
 	session, err := comatproto.ServerGetSession(ctx, client)
 	if err != nil {

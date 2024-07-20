@@ -1,3 +1,8 @@
+// Package simpleapi implements a very bare-bones API for mutating labeler's state.
+//
+// Handler accepts a POST request, with a partially populated label
+// as JSON in the request body. It doesn't provide any authentication
+// whatsoever, so make sure you're limiting who can access it.
 package simpleapi
 
 import (
@@ -17,6 +22,7 @@ type Handler struct {
 	handler http.Handler
 }
 
+// New returns HTTP handler to serve requests.
 func New(server *server.Server) *Handler {
 	h := &Handler{server: server}
 	h.handler = convreq.Wrap(h.serve)

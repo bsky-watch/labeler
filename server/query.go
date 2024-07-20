@@ -53,6 +53,7 @@ func (q *queryRequestGet) Match(entry *Entry) bool {
 	return slices.Contains(q.UriPatterns, entry.Uri)
 }
 
+// Query returns HTTP handler that implements [com.atproto.label.queryLabels](https://docs.bsky.app/docs/api/com-atproto-label-query-labels) XRPC method.
 func (s *Server) Query() http.Handler {
 	return convreq.Wrap(func(ctx context.Context, get queryRequestGet) convreq.HttpResponse {
 		if err := get.Validate(); err != nil {

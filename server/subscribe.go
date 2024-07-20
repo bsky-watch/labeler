@@ -19,6 +19,7 @@ import (
 	"bsky.watch/labeler/sign"
 )
 
+// Subscribe returns HTTP handler that implements [com.atproto.label.subscribeLabels](https://github.com/bluesky-social/atproto/blob/main/lexicons/com/atproto/label/subscribeLabels.json) XRPC method.
 func (s *Server) Subscribe() http.Handler {
 	upgrader := &websocket.Upgrader{
 		EnableCompression: true,

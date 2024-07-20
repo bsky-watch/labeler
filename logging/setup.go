@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Setup configures zerolog and returns a context with a logger attached.
 func Setup(ctx context.Context, logfile string, format string, level zerolog.Level) context.Context {
 	logFile := os.Stderr
 
