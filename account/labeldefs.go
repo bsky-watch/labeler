@@ -51,6 +51,7 @@ func UpdateLabelDefs(ctx context.Context, client *xrpc.Client, defs *bsky.Labele
 		Repo:       session.Did,
 		Rkey:       "self",
 		Record:     &util.LexiconTypeDecoder{Val: current},
+		SwapRecord: resp.Cid,
 	})
 	if err != nil {
 		return fmt.Errorf("com.atproto.repo.putRecord: %w", err)
