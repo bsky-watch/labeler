@@ -84,7 +84,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 					return err
 				}
 			}
-			lastKey = key
+			lastKey = slices.Clone(key)
 			for key, value = c.Next(); key != nil; key, value = c.Next() {
 				if len(value) == 0 {
 					continue
@@ -92,7 +92,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 				if err := s.sendLabel(ctx, conn, key, value); err != nil {
 					return err
 				}
-				lastKey = key
+				lastKey = slices.Clone(key)
 			}
 			return nil
 		})
@@ -114,6 +114,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 		err := s.db.View(func(tx *bolt.Tx) error {
 			c := tx.Bucket([]byte(bucketName)).Cursor()
 			lastKey, _ = c.Last()
+			lastKey = slices.Clone(lastKey)
 			return nil
 		})
 		if err != nil {
@@ -159,7 +160,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 					if err := s.sendLabel(ctx, conn, key, value); err != nil {
 						return err
 					}
-					lastKey = key
+					lastKey = slices.Clone(key)
 				}
 				return nil
 			})
