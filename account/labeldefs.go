@@ -40,9 +40,13 @@ func UpdateLabelDefs(ctx context.Context, client *xrpc.Client, defs *bsky.Labele
 		if err, ok := errors.As[*xrpc.XRPCError](err); ok {
 			if strings.HasPrefix(err.Message, "Could not locate record: ") {
 				missingRecord = true
-				resp.Value.Val = &bsky.LabelerService{
-					LexiconTypeID: "app.bsky.labeler.service",
-					CreatedAt:     time.Now().Format(time.RFC3339),
+				resp = &comatproto.RepoGetRecord_Output{
+					Value: &util.LexiconTypeDecoder{
+						Val: &bsky.LabelerService{
+							LexiconTypeID: "app.bsky.labeler.service",
+							CreatedAt:     time.Now().Format(time.RFC3339),
+						},
+					},
 				}
 			}
 		}
