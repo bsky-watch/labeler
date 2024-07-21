@@ -15,18 +15,20 @@ did:
 # if you try to apply an unknown label. It also can update your labeler profile info,
 # if you also specify a password below.
 labels:
-  # The labeler automatically adds identifiers from labelValueDefinitions to labelValues,
+  # The labeler automatically adds identifiers from labelvaluedefinitions to labelvalues,
   # if they're not listed.
-  # This means that most of the time you can completely omit specifying labelValues.
-  labelValues:
+  # This means that most of the time you can completely omit specifying labelvalues.
+  # Note that all field names are lowercased. This is due to how YAML parsing library
+  # handles field names by default.
+  labelvalues:
     - dmca-violation
-  labelValueDefinitions:
+  labelvaluedefinitions:
   # For reference see https://github.com/bluesky-social/atproto/blob/main/lexicons/com/atproto/label/defs.json#L78
     - identifier: elder
       severity: alert
       blurs: none
-      defaultSetting: warn
-      adultOnly: true
+      defaultsetting: warn
+      adultonly: true
       locales:
         - lang: en
           name: Bluesky Elder
