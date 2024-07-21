@@ -59,6 +59,7 @@ func UpdateSigningKeyAndEndpoint(ctx context.Context, client *xrpc.Client, token
 			Endpoint: endpoint,
 			Type:     "AtprotoLabeler",
 		}
+		update["services"] = services
 	}
 	if len(update) == 0 {
 		// No changes needed.
