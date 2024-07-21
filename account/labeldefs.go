@@ -18,17 +18,6 @@ import (
 // UpdateLabelDefs checks if labeler policy of the account that `client` is logged in with
 // is the same as `defs`. If it doesn't - it will try to update it.
 func UpdateLabelDefs(ctx context.Context, client *xrpc.Client, defs *bsky.LabelerDefs_LabelerPolicies) error {
-	labels := map[string]bool{}
-	for _, l := range defs.LabelValues {
-		labels[*l] = true
-	}
-	for _, def := range defs.LabelValueDefinitions {
-		if labels[def.Identifier] {
-			continue
-		}
-		defs.LabelValues = append(defs.LabelValues, &def.Identifier)
-	}
-
 	session, err := comatproto.ServerGetSession(ctx, client)
 	if err != nil {
 		return fmt.Errorf("com.atproto.server.getSession: %w", err)

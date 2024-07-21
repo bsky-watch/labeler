@@ -41,6 +41,7 @@ func runMain(ctx context.Context) error {
 	if err := yaml.Unmarshal(b, config); err != nil {
 		return fmt.Errorf("parsing config file: %w", err)
 	}
+	config.UpdateLabelValues()
 
 	key, err := sign.ParsePrivateKey(config.PrivateKey)
 	if err != nil {
@@ -51,6 +52,8 @@ func runMain(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("instantiating a server: %w", err)
 	}
+
+	server.SetAllowedLabels(config.LabelValues())
 
 	if config.Password != "" && len(config.Labels.LabelValueDefinitions) > 0 {
 		client := xrpcauth.NewClientWithTokenSource(ctx, xrpcauth.PasswordAuth(config.DID, config.Password))

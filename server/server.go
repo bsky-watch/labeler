@@ -32,9 +32,10 @@ type Server struct {
 	did        string
 	privateKey *secec.PrivateKey
 
-	mu        sync.RWMutex
-	labels    map[string]map[string]map[string]map[string]Entry // src -> uri -> label -> cid -> entry
-	wakeChans []chan struct{}
+	mu            sync.RWMutex
+	labels        map[string]map[string]map[string]map[string]Entry // src -> uri -> label -> cid -> entry
+	wakeChans     []chan struct{}
+	allowedLabels map[string]bool
 }
 
 // New creates and returns a new server instance.
@@ -133,10 +134,12 @@ func (s *Server) AddLabel(label comatproto.LabelDefs_Label) (bool, error) {
 }
 
 func (s *Server) addLabel(entry Entry) (bool, error) {
-	// TODO: check if this label is in our config.
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.allowedLabels) > 0 && !s.allowedLabels[entry.Val] {
+		return false, fmt.Errorf("we are not allowed to apply the label %q", entry.Val)
+	}
+
 	if !s.locked_applyLabelCreation(entry, true) {
 		// Label doesn't actually change the state in any way.
 		return false, nil
@@ -259,4 +262,16 @@ func (s *Server) DoNotUseUnlessYouKnowWhatYoureDoing_BumpLastKeyTo(n int64) erro
 		}
 		return fmt.Errorf("already have key %d >= %d", k, n)
 	})
+}
+
+// SetAllowedLabels limits what label values can be used for new labels.
+// Old existing labels are not affected, and label negations are also always allowed.
+// By default all labels are allowed.
+func (s *Server) SetAllowedLabels(labels []string) {
+	s.mu.Lock()
+	s.allowedLabels = map[string]bool{}
+	for _, l := range labels {
+		s.allowedLabels[l] = true
+	}
+	s.mu.Unlock()
 }
