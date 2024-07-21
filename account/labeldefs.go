@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
+	"time"
+
+	"github.com/imax9000/errors"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
 	"github.com/bluesky-social/indigo/api/bsky"
@@ -32,7 +36,19 @@ func UpdateLabelDefs(ctx context.Context, client *xrpc.Client, defs *bsky.Labele
 
 	resp, err := comatproto.RepoGetRecord(ctx, client, "", "app.bsky.labeler.service", session.Did, "self")
 	if err != nil {
-		return fmt.Errorf("com.atproto.repo.getRecord: %w", err)
+		missingRecord := false
+		if err, ok := errors.As[*xrpc.XRPCError](err); ok {
+			if strings.HasPrefix(err.Message, "Could not locate record: ") {
+				missingRecord = true
+				resp.Value.Val = &bsky.LabelerService{
+					LexiconTypeID: "app.bsky.labeler.service",
+					CreatedAt:     time.Now().Format(time.RFC3339),
+				}
+			}
+		}
+		if !missingRecord {
+			return fmt.Errorf("com.atproto.repo.getRecord: %w", err)
+		}
 	}
 
 	current, ok := resp.Value.Val.(*bsky.LabelerService)
