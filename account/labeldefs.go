@@ -13,11 +13,17 @@ import (
 	"github.com/bluesky-social/indigo/api/bsky"
 	"github.com/bluesky-social/indigo/lex/util"
 	"github.com/bluesky-social/indigo/xrpc"
+
+	"bsky.watch/labeler/config"
 )
 
 // UpdateLabelDefs checks if labeler policy of the account that `client` is logged in with
 // is the same as `defs`. If it doesn't - it will try to update it.
 func UpdateLabelDefs(ctx context.Context, client *xrpc.Client, defs *bsky.LabelerDefs_LabelerPolicies) error {
+	cfg := &config.Config{Labels: *defs}
+	cfg.UpdateLabelValues()
+	defs = &cfg.Labels
+
 	session, err := comatproto.ServerGetSession(ctx, client)
 	if err != nil {
 		return fmt.Errorf("com.atproto.server.getSession: %w", err)
