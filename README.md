@@ -44,6 +44,17 @@ For someone to be able to subscribe to your labeler and see the labels, two thin
 `labeler` and `list-labeler` automatically do it at startup. Just make sure that in your config
 you have `labels` set up the way you want them, and that `did` and `password` are specified too.
 
+## Migrating from Ozone
+
+WARNING: this wasn't tested yet on any live instance, please report any issues if you do this.
+
+`cmd/clone` implements making a copy of a labeler with the same sequence numbers, so cursor values
+any consumers have will remain valid and point to the same data.
+
+1. Keep Ozone running, but ensure that no new changes are happening.
+2. `docker compose run --entrypoint=./clone labeler --config=/config.yaml --from=https://your.ozone.instance`
+3. If it completes without errors, start your labeler with `docker compose up -d`
+
 ## Labeling accounts based on a mute list
 
 There's an implementation of a labeler that takes a list and converts it into a label in `cmd/list-labeler` directory.

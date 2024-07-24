@@ -15,8 +15,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
+
+	"golang.org/x/exp/maps"
 
 	"gitlab.com/yawning/secp256k1-voi/secec"
 	bolt "go.etcd.io/bbolt"
@@ -274,4 +277,73 @@ func (s *Server) SetAllowedLabels(labels []string) {
 		s.allowedLabels[l] = true
 	}
 	s.mu.Unlock()
+}
+
+// IsEmpty returns true if there are no labels in the database.
+func (s *Server) IsEmpty() (bool, error) {
+	empty := false
+	err := s.db.View(func(tx *bolt.Tx) error {
+		k, _ := tx.Bucket([]byte(bucketName)).Cursor().First()
+		empty = k == nil
+		return nil
+	})
+	return empty, err
+}
+
+// ImportEntries populates an empty server with the given entries. Each entry is written at
+// a sequence number equal to the map key.
+//
+// Note that this method does not update the in-memory state of the server, so it must be restarted
+// before serving any requests.
+func (s *Server) ImportEntries(entries map[int64]comatproto.LabelDefs_Label) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// XXX: crash on any attempts to use the server after this.
+	s.labels = nil
+
+	empty, err := s.IsEmpty()
+	if err != nil {
+		return err
+	}
+	if !empty {
+		return fmt.Errorf("database is not empty")
+	}
+
+	keys := maps.Keys(entries)
+	slices.Sort(keys)
+
+	for _, ks := range splitInBatshes(keys, 1000) {
+		err := s.db.Update(func(tx *bolt.Tx) error {
+			bucket := tx.Bucket([]byte(bucketName))
+			for _, k := range ks {
+				v := entries[k]
+				v.Sig = nil
+				v.Src = s.did
+				b, err := json.Marshal(&v)
+				if err != nil {
+					return fmt.Errorf("marshaling entry %d: %w", k, err)
+				}
+				if err := bucket.Put(encodeKey(k), b); err != nil {
+					return fmt.Errorf("writing entry %d: %w", k, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitInBatshes[T any](s []T, batchSize int) [][]T {
+	var r [][]T
+	for i := 0; i < len(s); i += batchSize {
+		if i+batchSize < len(s) {
+			r = append(r, s[i:i+batchSize])
+		} else {
+			r = append(r, s[i:])
+		}
+	}
+	return r
 }
