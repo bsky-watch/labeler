@@ -69,6 +69,8 @@ func New(ctx context.Context, path string, did string, key *secec.PrivateKey) (*
 		return nil, err
 	}
 
+	activeSubscriptions.WithLabelValues(s.did).Set(0)
+
 	return s, nil
 }
 

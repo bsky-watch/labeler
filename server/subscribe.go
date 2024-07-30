@@ -62,10 +62,12 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 
 	s.mu.Lock()
 	s.wakeChans = append(s.wakeChans, wakeCh)
+	activeSubscriptions.WithLabelValues(s.did).Set(float64(len(s.wakeChans)))
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		s.wakeChans = slices.DeleteFunc(s.wakeChans, func(ch chan struct{}) bool { return ch == wakeCh })
+		activeSubscriptions.WithLabelValues(s.did).Set(float64(len(s.wakeChans)))
 		s.mu.Unlock()
 	}()
 
