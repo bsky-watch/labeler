@@ -29,7 +29,13 @@ func (s *Server) Subscribe() http.Handler {
 		ctx := r.Context()
 		log := zerolog.Ctx(ctx).With().Str("remote", r.RemoteAddr).Logger()
 
-		log.Debug().Msgf("Subscription request from %q", r.RemoteAddr)
+		remote := r.RemoteAddr
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			remote = fmt.Sprintf("%s (via %s)", forwarded, r.RemoteAddr)
+			log = log.With().Str("forwarded_for", forwarded).Logger()
+		}
+
+		log.Debug().Msgf("Subscription request from %q", remote)
 
 		cursor := int64(-1)
 		if s := r.FormValue("cursor"); s != "" {
