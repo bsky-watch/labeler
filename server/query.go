@@ -9,6 +9,7 @@ import (
 
 	"github.com/Jille/convreq"
 	"github.com/Jille/convreq/respond"
+	"github.com/imax9000/errors"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
 
@@ -21,6 +22,17 @@ type queryRequestGet struct {
 	// Ignoring `limit` and `cursor`
 }
 
+type errUnsupportedPattern string
+
+func (s errUnsupportedPattern) Error() string {
+	return fmt.Sprintf("unsupported pattern %q", string(s))
+}
+
+func (err errUnsupportedPattern) Respond(w http.ResponseWriter, r *http.Request) error {
+	http.Error(w, fmt.Sprintf("I received your request but I decided to ignore you.\n\n%s", err), 448)
+	return nil
+}
+
 func (q *queryRequestGet) Validate() error {
 	if len(q.UriPatterns) == 0 {
 		return fmt.Errorf("need at least one pattern")
@@ -29,13 +41,13 @@ func (q *queryRequestGet) Validate() error {
 		switch {
 		case strings.HasPrefix(p, "did:"):
 			if strings.Contains(p, "*") {
-				return fmt.Errorf("invalid pattern %q", p)
+				return errUnsupportedPattern(p)
 			}
 		case strings.HasPrefix(p, "at://"):
 			// We don't support wildcards yet. Even if only the rkey is wildcarded,
 			// the query becomes too broad.
 			if strings.Contains(p, "*") {
-				return fmt.Errorf("unsupported pattern %q", p)
+				return errUnsupportedPattern(p)
 			}
 		default:
 			return fmt.Errorf("invalid pattern %q", p)
@@ -57,6 +69,9 @@ func (q *queryRequestGet) Match(entry *Entry) bool {
 func (s *Server) Query() http.Handler {
 	return convreq.Wrap(func(ctx context.Context, get queryRequestGet) convreq.HttpResponse {
 		if err := get.Validate(); err != nil {
+			if err, ok := errors.As[errUnsupportedPattern](err); ok {
+				return err
+			}
 			return respond.BadRequest(err.Error())
 		}
 
