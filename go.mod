@@ -6,6 +6,7 @@ require (
 	bsky.watch/utils v0.0.0-20240719191258-612e4bd53c6e
 	github.com/Jille/convreq v1.7.1
 	github.com/bluesky-social/indigo v0.0.0-20240712235331-7d1235931bd3
+	github.com/google/go-cmp v0.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/imax9000/errors v1.0.0
 	github.com/multiformats/go-multibase v0.2.0
