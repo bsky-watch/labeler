@@ -65,6 +65,29 @@ func (q *queryRequestGet) Match(entry *Entry) bool {
 	return slices.Contains(q.UriPatterns, entry.Uri)
 }
 
+func (s *Server) query(ctx context.Context, get queryRequestGet) ([]Entry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := []Entry{}
+	for _, p := range get.UriPatterns {
+		for src, uriLabels := range s.labels {
+			if len(get.Sources) > 0 && !slices.Contains(get.Sources, src) {
+				continue
+			}
+			// Taking advantage of the fact that we don't allow any wildcards at all.
+			// So we can just do a plain map lookup.
+			for _, labels := range uriLabels[p] {
+				for _, entry := range labels {
+					if get.Match(&entry) {
+						result = append(result, entry)
+					}
+				}
+			}
+		}
+	}
+	return result, nil
+}
+
 // Query returns HTTP handler that implements [com.atproto.label.queryLabels](https://docs.bsky.app/docs/api/com-atproto-label-query-labels) XRPC method.
 func (s *Server) Query() http.Handler {
 	return convreq.Wrap(func(ctx context.Context, get queryRequestGet) convreq.HttpResponse {
@@ -75,24 +98,9 @@ func (s *Server) Query() http.Handler {
 			return respond.BadRequest(err.Error())
 		}
 
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		result := []Entry{}
-		for _, p := range get.UriPatterns {
-			for src, uriLabels := range s.labels {
-				if len(get.Sources) > 0 && !slices.Contains(get.Sources, src) {
-					continue
-				}
-				// Taking advantage of the fact that we don't allow any wildcards at all.
-				// So we can just do a plain map lookup.
-				for _, labels := range uriLabels[p] {
-					for _, entry := range labels {
-						if get.Match(&entry) {
-							result = append(result, entry)
-						}
-					}
-				}
-			}
+		result, err := s.query(ctx, get)
+		if err != nil {
+			return respond.InternalServerError("failed to query labels")
 		}
 
 		for i := range result {
