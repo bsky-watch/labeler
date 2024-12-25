@@ -17,7 +17,7 @@ var (
 		Subsystem: "server",
 		Name:      "write_duration_seconds",
 		Help:      "Latency of writing new labels into the database.",
-		Buckets:   prometheus.ExponentialBucketsRange(0.1, 30000, 20),
+		Buckets:   prometheus.ExponentialBucketsRange(0.001, 1800, 20),
 	}, []string{"did", "status"})
 
 	// Not happy about using an IP addr as a label value, but not
