@@ -200,9 +200,18 @@ func (s *Server) AddLabel(label comatproto.LabelDefs_Label) (bool, error) {
 	}
 	label.Cts = time.Now().Format(time.RFC3339)
 	label.Sig = nil // We don't store signatures and always generate them on demand.
+
+	start := time.Now()
 	r, err := s.writeLabel(*(&Entry{}).FromLabel(0, label))
+	duration := time.Since(start)
 	if err != nil {
+		writeLatency.WithLabelValues(s.did, "error").Observe(duration.Seconds())
 		return false, err
+	}
+	if r {
+		writeLatency.WithLabelValues(s.did, "written").Observe(duration.Seconds())
+	} else {
+		writeLatency.WithLabelValues(s.did, "noop").Observe(duration.Seconds())
 	}
 	if r {
 		go s.wakeUpSubs()
