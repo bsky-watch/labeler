@@ -35,7 +35,7 @@ func (s *Server) Subscribe() http.Handler {
 			log = log.With().Str("forwarded_for", forwarded).Logger()
 		}
 
-		log.Debug().Msgf("Subscription request from %q", remote)
+		log.Info().Msgf("Subscription request from %q", remote)
 
 		cursor := int64(-1)
 		if s := r.FormValue("cursor"); s != "" {
@@ -56,7 +56,7 @@ func (s *Server) Subscribe() http.Handler {
 		}
 		remote = strings.SplitN(remote, ",", 2)[0]
 		s.streamLabels(log.WithContext(ctx), c, cursor, remote)
-		log.Debug().Msgf("Connection closed")
+		log.Info().Msgf("Connection closed")
 	})
 }
 
@@ -120,6 +120,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 			return nil
 		}).Error
 		if err != nil {
+			log.Error().Err(err).Msgf("Failed to query labels to send: %s", err)
 			return
 		}
 	} else {
@@ -165,6 +166,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 				return nil
 			}).Error
 			if err != nil {
+				log.Error().Err(err).Msgf("Failed to query new labels to send: %s", err)
 				return
 			}
 		}
