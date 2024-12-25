@@ -219,7 +219,7 @@ func (s *Server) LabelEntries(ctx context.Context, labelName string) ([]comatpro
 	var entries []Entry
 	err := s.db.Model(&entries).
 		Where("val = ?", labelName).
-		Order("id asc").
+		Order("seq asc").
 		Find(&entries).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
