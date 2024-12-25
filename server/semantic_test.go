@@ -2,16 +2,15 @@ package server
 
 import (
 	"context"
-	"os"
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	bolt "go.etcd.io/bbolt"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
 
-	"bsky.watch/labeler/sign"
+	"bsky.watch/labeler/config"
 )
 
 const labelerDID = "did:example"
@@ -19,32 +18,22 @@ const testDID = "did:foo"
 const otherDID = "did:bar"
 const privateKey = "c6d40ec53c689ca905036e41d8c73560777e5746d1d228fd6f9db56efed8ecaf"
 
+var dbCount = 0
+
 func NewTestServer(ctx context.Context) (*Server, error) {
-	key, err := sign.ParsePrivateKey(privateKey)
-	if err != nil {
-		return nil, err
+	config := &config.Config{
+		SQLiteDB:   fmt.Sprintf("file:testdb%d?mode=memory&cache=shared", dbCount),
+		DID:        labelerDID,
+		PrivateKey: privateKey,
 	}
-
-	f, err := os.CreateTemp("", "labeler_test.*.bolt")
-	if err != nil {
-		return nil, err
-	}
-	path := f.Name()
-	f.Close()
-
-	// Delete the file after it is opened by New().
-	defer func() { os.Remove(path) }()
-
-	return New(ctx, path, labelerDID, key)
+	// Not thread-safe, but we aren't running any tests in parllel yet.
+	dbCount++
+	return NewWithConfig(ctx, config)
 }
 
 func TestBasic(t *testing.T) {
 	ctx := context.Background()
 
-	type testQuery struct {
-		Query          []string
-		ExpectedLabels []Entry
-	}
 	type testCase struct {
 		Name           string
 		Labels         []comatproto.LabelDefs_Label
@@ -100,7 +89,7 @@ func TestBasic(t *testing.T) {
 				{Val: "a"},
 				{Val: "a", Cid: ptr("a")},
 			},
-			ExpectedLabels: []Entry{{Val: "a"}, {Val: "a", Cid: ptr("a")}},
+			ExpectedLabels: []Entry{{Val: "a"}, {Val: "a", Cid: "a"}},
 		},
 
 		// The following were derived from reading Ozone's source code, i.e.,
@@ -119,10 +108,10 @@ func TestBasic(t *testing.T) {
 				{Val: "d", Cid: ptr("d")},
 			},
 			ExpectedLabels: []Entry{
-				{Val: "a", Exp: ptr("a")},
-				{Val: "b", Cid: ptr("b"), Exp: ptr("b")},
+				{Val: "a", Exp: "a"},
+				{Val: "b", Cid: "b", Exp: "b"},
 				{Val: "c"},
-				{Val: "d", Cid: ptr("d")},
+				{Val: "d", Cid: "d"},
 			},
 		},
 		{
@@ -141,10 +130,10 @@ func TestBasic(t *testing.T) {
 				{Val: "d", Neg: ptr(true)},                // no-op
 			},
 			ExpectedLabels: []Entry{
-				{Val: "a", Cid: ptr("a")},
+				{Val: "a", Cid: "a"},
 				{Val: "b"},
 				{Val: "c"},
-				{Val: "d", Cid: ptr("d")},
+				{Val: "d", Cid: "d"},
 			},
 		},
 		{
@@ -163,32 +152,16 @@ func TestBasic(t *testing.T) {
 	}
 
 	cmpOpts := []cmp.Option{
-		cmpopts.IgnoreFields(Entry{}, "Cts", "Ver", "Src"),
+		cmpopts.IgnoreFields(Entry{}, "Seq", "Cts", "Src"),
 		cmpopts.SortSlices(func(a Entry, b Entry) bool {
 			if a.Val != b.Val {
 				return a.Val < b.Val
 			}
-			if a.Cid != nil || b.Cid != nil {
-				if a.Cid == nil {
-					return true
-				}
-				if b.Cid == nil {
-					return false
-				}
-				if *a.Cid < *b.Cid {
-					return true
-				}
+			if a.Cid != b.Cid {
+				return a.Cid < b.Cid
 			}
-			if a.Exp != nil || b.Exp != nil {
-				if a.Exp == nil {
-					return true
-				}
-				if b.Exp == nil {
-					return false
-				}
-				if *a.Exp < *b.Exp {
-					return true
-				}
+			if a.Exp != b.Exp {
+				return a.Exp < b.Exp
 			}
 			return false
 		}),
@@ -224,12 +197,11 @@ func TestBasic(t *testing.T) {
 			if diff := cmp.Diff(expected, entries, cmpOpts...); diff != "" {
 				t.Errorf(diff)
 
-				server.db.View(func(tx *bolt.Tx) error {
-					return tx.Bucket([]byte(bucketName)).ForEach(func(k, v []byte) error {
-						t.Log(string(v))
-						return nil
-					})
-				})
+				var entries []Entry
+				server.db.Model(&entries).Order("seq asc").Find(&entries)
+				for _, e := range entries {
+					t.Logf("%+v", e)
+				}
 			}
 		})
 	}

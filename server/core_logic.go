@@ -1,64 +1,88 @@
 package server
 
-// locked_applyLabelCreation implements the logic of adding a label.
-// Return value indicates if any change was actually made.
-func (s *Server) locked_applyLabelCreation(entry Entry, dryRun bool) bool {
-	src := entry.Src
-	uri := entry.Uri
-	val := entry.Val
-	cid := ""
-	if entry.Cid != nil {
-		cid = *entry.Cid
-	}
-	if s.labels[src] == nil {
-		s.labels[src] = map[string]map[string]map[string]Entry{}
-	}
-	if s.labels[src][uri] == nil {
-		s.labels[src][uri] = map[string]map[string]Entry{}
-	}
-	if s.labels[src][uri][val] == nil {
-		s.labels[src][uri][val] = map[string]Entry{}
-	}
-	if prev, found := s.labels[src][uri][val][cid]; found {
-		if prev.Exp == nil && entry.Exp == nil {
-			return false
+import (
+	"errors"
+	"fmt"
+
+	"gorm.io/gorm"
+)
+
+func (s *Server) writeLabel(newLabel Entry) (bool, error) {
+	updated := false
+	for i := 0; i < 5; i++ {
+		err := immediateTransaction(s.db, func(tx *gorm.DB) error {
+			updated = false
+			lastKey := int64(0)
+			err := tx.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("failed to query last existing key: %w", err)
+			}
+
+			var entries []Entry
+			err = s.db.Model(&Entry{}).
+				Where("src = ? and val = ? and uri = ? and cid = ?",
+					newLabel.Src, newLabel.Val, newLabel.Uri, newLabel.Cid).
+				Order("seq desc").Limit(1).Find(&entries).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("failed to query existing labels: %w", err)
+			}
+
+			noOp := false // default for the case we don't find any matches.
+			if newLabel.Neg {
+				// If the label is a negation - default to not writing it, since we don't
+				// have anything to negate in the first place.
+				noOp = true
+			}
+			if len(entries) > 0 {
+				e := entries[0]
+				noOp = true
+				if e.Neg != newLabel.Neg {
+					noOp = false
+				}
+				if e.Exp != newLabel.Exp {
+					noOp = false
+				}
+			}
+
+			if noOp {
+				return nil
+			}
+			updated = true
+
+			newLabel.Seq = lastKey + 1
+			return tx.Create(&newLabel).Error
+		})
+		if err != nil {
+			continue
 		}
-		if prev.Exp != nil && entry.Exp != nil && *prev.Exp == *entry.Exp {
-			return false
-		}
+		return updated, nil
 	}
-	if !dryRun {
-		s.labels[src][uri][val][cid] = entry
-	}
-	return true
+	return false, fmt.Errorf("failed to write the new label")
 }
 
-// locked_applyLabelRemoval implements the logic of removing a label.
-// Return value indicates if any change was actually made.
-func (s *Server) locked_applyLabelRemoval(entry Entry, dryRun bool) bool {
-	src := entry.Src
-	uri := entry.Uri
-	val := entry.Val
-	cid := ""
-	if entry.Cid != nil {
-		cid = *entry.Cid
-	}
-	if len(s.labels[src]) == 0 {
-		return false
-	}
-	if len(s.labels[src][uri]) == 0 {
-		return false
-	}
-	if len(s.labels[src][uri][val]) == 0 {
-		return false
-	}
-	// Doing the dumb thing only for now. That is, not touching labels
-	// for specific CIDs upon negation w/o a CID.
-	if _, found := s.labels[src][uri][val][cid]; found {
-		if !dryRun {
-			delete(s.labels[src][uri][val], cid)
+func dedupeAndNegateEntries(entries []Entry) []Entry {
+	skip := map[string]map[string]map[string]map[string]bool{}
+	r := []Entry{}
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if skip[e.Src] == nil {
+			skip[e.Src] = map[string]map[string]map[string]bool{}
 		}
-		return true
+		if skip[e.Src][e.Val] == nil {
+			skip[e.Src][e.Val] = map[string]map[string]bool{}
+		}
+		if skip[e.Src][e.Val][e.Uri] == nil {
+			skip[e.Src][e.Val][e.Uri] = map[string]bool{}
+		}
+
+		if e.Neg {
+			skip[e.Src][e.Val][e.Uri][e.Cid] = true
+		}
+		if skip[e.Src][e.Val][e.Uri][e.Cid] {
+			continue
+		}
+		r = append(r, e)
+		skip[e.Src][e.Val][e.Uri][e.Cid] = true
 	}
-	return false
+	return r
 }

@@ -1,4 +1,4 @@
-// Package server implements an ATproto labeler, using [bbolt](https://github.com/etcd-io/bbolt) as storage.
+// Package server implements an ATproto labeler, using SQLite as storage.
 //
 // Example usage:
 //
@@ -14,6 +14,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -23,50 +24,64 @@ import (
 
 	"gitlab.com/yawning/secp256k1-voi/secec"
 	bolt "go.etcd.io/bbolt"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
-	"github.com/rs/zerolog"
+
+	"bsky.watch/labeler/config"
+	"bsky.watch/labeler/sign"
 )
 
-const bucketName = "Labels"
+const boltBucketName = "Labels"
 
 type Server struct {
-	db         *bolt.DB
+	db         *gorm.DB
 	did        string
 	privateKey *secec.PrivateKey
 
 	mu            sync.RWMutex
-	labels        map[string]map[string]map[string]map[string]Entry // src -> uri -> label -> cid -> entry
 	wakeChans     []chan struct{}
 	allowedLabels map[string]bool
 }
 
-// New creates and returns a new server instance.
-func New(ctx context.Context, path string, did string, key *secec.PrivateKey) (*Server, error) {
-	if key == nil {
-		return nil, fmt.Errorf("signing key is required")
+// NewWithConfig creates a new server instance using parameters provided in the config.
+func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
+	cfg.UpdateLabelValues()
+
+	key, err := sign.ParsePrivateKey(cfg.PrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("parsing private key: %w", err)
 	}
 
-	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	switch {
+	case cfg.SQLiteDB != "":
+		if cfg.DBFile != "" {
+			err := migrateBoltToSQLite(ctx, cfg.DBFile, cfg.SQLiteDB)
+			if err != nil {
+				return nil, fmt.Errorf("migrating data to sqlite: %w", err)
+			}
+		}
+		return newWithSQLite(ctx, cfg.SQLiteDB, cfg.DID, key)
+	default:
+		return nil, fmt.Errorf("no database location provided")
+	}
+}
+
+func newWithSQLite(ctx context.Context, dbpath string, did string, privateKey *secec.PrivateKey) (*Server, error) {
+	db, err := gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to DB: %w", err)
 	}
 
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(bucketName))
-		return err
-	})
-	if err != nil {
-		return nil, err
+	if err := db.AutoMigrate(&Entry{}); err != nil {
+		return nil, fmt.Errorf("failed to update DB schema: %w", err)
 	}
 
 	s := &Server{
 		db:         db,
 		did:        did,
-		privateKey: key,
-	}
-	if err := s.replayStream(ctx); err != nil {
-		return nil, err
+		privateKey: privateKey,
 	}
 
 	activeSubscriptions.WithLabelValues(s.did).Set(0)
@@ -74,42 +89,85 @@ func New(ctx context.Context, path string, did string, key *secec.PrivateKey) (*
 	return s, nil
 }
 
-type Entry comatproto.LabelDefs_Label
+func migrateBoltToSQLite(ctx context.Context, boltDB string, sqliteDB string) error {
+	oldDB, err := bolt.Open(boltDB, 0600, &bolt.Options{
+		Timeout:  1 * time.Second,
+		ReadOnly: true,
+	})
+	if err != nil {
+		return fmt.Errorf("opening old DB: %w", err)
+	}
+	var lastBoltKey int64
+	err = oldDB.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte(boltBucketName)).Cursor()
+		k, _ := c.Last()
+		if k == nil {
+			return nil
+		}
+		n, err := decodeKey(k)
+		if err != nil {
+			return err
+		}
+		lastBoltKey = n
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("looking up last allocated key in the old DB: %w", err)
+	}
 
-func (s *Server) replayStream(ctx context.Context) error {
-	log := zerolog.Ctx(ctx)
+	newDB, err := gorm.Open(sqlite.Open(sqliteDB), &gorm.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to connect to DB: %w", err)
+	}
+	if err := newDB.AutoMigrate(&Entry{}); err != nil {
+		return fmt.Errorf("failed to update DB schema: %w", err)
+	}
+	var lastSQLiteKey int64
+	err = newDB.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastSQLiteKey).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("failed to query last existing key: %w", err)
+	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if lastBoltKey <= lastSQLiteKey {
+		// No migration needed.
+		// XXX: we don't check if the labels in SQLite are actually the same.
+		return nil
+	}
+	if lastSQLiteKey != 0 {
+		return fmt.Errorf("new DB is not empty and old DB has more entries than the new one. Not sure how to proceed")
+	}
 
-	s.labels = map[string]map[string]map[string]map[string]Entry{}
-
-	log.Info().Msgf("Loading database from disk...")
-	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(bucketName)).ForEach(func(k, v []byte) error {
+	labels := map[int64]comatproto.LabelDefs_Label{}
+	err = oldDB.View(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(boltBucketName)).ForEach(func(k, v []byte) error {
 			if len(v) == 0 {
 				// XXX: skipping empty padding entries, used only when replacing
 				// software for existing labeler.
 				return nil
 			}
-
-			entry := &Entry{}
-			if err := json.Unmarshal(v, entry); err != nil {
+			n, err := decodeKey(k)
+			if err != nil {
 				return err
 			}
-			if entry.Neg != nil && *entry.Neg {
-				s.locked_applyLabelRemoval(*entry, false)
-			} else {
-				s.locked_applyLabelCreation(*entry, false)
+			var label comatproto.LabelDefs_Label
+			if err := json.Unmarshal(v, &label); err != nil {
+				return err
 			}
+
+			labels[n] = label
 			return nil
 		})
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read entries from the old DB: %w", err)
 	}
-	log.Info().Msgf("Loading done.")
-	return nil
+
+	dummyServer := &Server{
+		db: newDB,
+	}
+
+	// This will fail if newDB is not empty.
+	return dummyServer.ImportEntries(labels)
 }
 
 // AddLabel updates the internal state and writes the label to the database.
@@ -130,79 +188,14 @@ func (s *Server) AddLabel(label comatproto.LabelDefs_Label) (bool, error) {
 	}
 	label.Cts = time.Now().Format(time.RFC3339)
 	label.Sig = nil // We don't store signatures and always generate them on demand.
-	switch {
-	case label.Neg != nil && *label.Neg:
-		return s.removeLabel(Entry(label))
-	default:
-		return s.addLabel(Entry(label))
-	}
-}
-
-func (s *Server) addLabel(entry Entry) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.allowedLabels) > 0 && !s.allowedLabels[entry.Val] {
-		return false, fmt.Errorf("we are not allowed to apply the label %q", entry.Val)
-	}
-
-	if !s.locked_applyLabelCreation(entry, true) {
-		// Label doesn't actually change the state in any way.
-		return false, nil
-	}
-
-	err := s.writeEntry(entry)
+	r, err := s.writeLabel(*(&Entry{}).FromLabel(0, label))
 	if err != nil {
 		return false, err
 	}
-
-	r := s.locked_applyLabelCreation(entry, false)
-	go s.wakeUpSubs()
+	if r {
+		go s.wakeUpSubs()
+	}
 	return r, nil
-}
-
-func (s *Server) removeLabel(entry Entry) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.locked_applyLabelRemoval(entry, true) {
-		// Label doesn't actually change the state in any way.
-		return false, nil
-	}
-
-	err := s.writeEntry(entry)
-	if err != nil {
-		return false, err
-	}
-
-	r := s.locked_applyLabelRemoval(entry, false)
-	go s.wakeUpSubs()
-	return r, nil
-}
-
-func (s *Server) writeEntry(entry Entry) error {
-	value, err := json.Marshal(&entry)
-	if err != nil {
-		return fmt.Errorf("marshaling record: %w", err)
-	}
-
-	err = s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketName))
-		key, _ := b.Cursor().Last()
-		var n int64
-		if key != nil {
-			k, err := decodeKey(key)
-			if err != nil {
-				return err
-			}
-			n = k
-		}
-		n++
-		b.Put(encodeKey(n), value)
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("writing the record to disk: %w", err)
-	}
-	return nil
 }
 
 func (s *Server) wakeUpSubs() {
@@ -223,50 +216,19 @@ func ptr[T any](v T) *T { return &v }
 // LabelEntries returns all non-negated label entries for the provided label name.
 // Does not filter out expired entries.
 func (s *Server) LabelEntries(ctx context.Context, labelName string) ([]comatproto.LabelDefs_Label, error) {
-	r := []comatproto.LabelDefs_Label{}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, uris := range s.labels {
-		for _, labels := range uris {
-			for _, entry := range labels[labelName] {
-				// Make a copy of pointer fields to ensure that changing the returned entries
-				// will not affect our internal state.
-				if entry.Cid != nil {
-					entry.Cid = ptr(*entry.Cid)
-				}
-				if entry.Exp != nil {
-					entry.Exp = ptr(*entry.Exp)
-				}
-				if entry.Neg != nil {
-					entry.Neg = ptr(*entry.Neg)
-				}
-				if entry.Ver != nil {
-					entry.Ver = ptr(*entry.Ver)
-				}
-
-				r = append(r, comatproto.LabelDefs_Label(entry))
-			}
+	var entries []Entry
+	err := s.db.Model(&entries).
+		Where("val = ?", labelName).
+		Order("id asc").
+		Find(&entries).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
 		}
+		return nil, err
 	}
 
-	return r, nil
-}
-
-func (s *Server) DoNotUseUnlessYouKnowWhatYoureDoing_BumpLastKeyTo(n int64) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketName))
-		c := b.Cursor()
-		key, _ := c.Last()
-		k, err := decodeKey(key)
-		if err != nil {
-			return err
-		}
-		if k < n {
-			return b.Put(encodeKey(n), []byte{})
-		}
-		return fmt.Errorf("already have key %d >= %d", k, n)
-	})
+	return entriesToLabels(dedupeAndNegateEntries(entries)), nil
 }
 
 // SetAllowedLabels limits what label values can be used for new labels.
@@ -283,25 +245,19 @@ func (s *Server) SetAllowedLabels(labels []string) {
 
 // IsEmpty returns true if there are no labels in the database.
 func (s *Server) IsEmpty() (bool, error) {
-	empty := false
-	err := s.db.View(func(tx *bolt.Tx) error {
-		k, _ := tx.Bucket([]byte(bucketName)).Cursor().First()
-		empty = k == nil
-		return nil
-	})
-	return empty, err
+	count := int64(0)
+	err := s.db.Model(&Entry{}).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count == 0, nil
 }
 
 // ImportEntries populates an empty server with the given entries. Each entry is written at
 // a sequence number equal to the map key.
-//
-// Note that this method does not update the in-memory state of the server, so it must be restarted
-// before serving any requests.
 func (s *Server) ImportEntries(entries map[int64]comatproto.LabelDefs_Label) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// XXX: crash on any attempts to use the server after this.
-	s.labels = nil
 
 	empty, err := s.IsEmpty()
 	if err != nil {
@@ -314,23 +270,13 @@ func (s *Server) ImportEntries(entries map[int64]comatproto.LabelDefs_Label) err
 	keys := maps.Keys(entries)
 	slices.Sort(keys)
 
-	for _, ks := range splitInBatshes(keys, 1000) {
-		err := s.db.Update(func(tx *bolt.Tx) error {
-			bucket := tx.Bucket([]byte(bucketName))
-			for _, k := range ks {
-				v := entries[k]
-				v.Sig = nil
-				v.Src = s.did
-				b, err := json.Marshal(&v)
-				if err != nil {
-					return fmt.Errorf("marshaling entry %d: %w", k, err)
-				}
-				if err := bucket.Put(encodeKey(k), b); err != nil {
-					return fmt.Errorf("writing entry %d: %w", k, err)
-				}
-			}
-			return nil
-		})
+	for _, ks := range splitInBatches(keys, 1000) {
+		values := make([]Entry, 0, len(ks))
+		for _, k := range ks {
+			values = append(values, *(&Entry{}).FromLabel(k, entries[k]))
+		}
+
+		err := s.db.Create(&values).Error
 		if err != nil {
 			return err
 		}
@@ -338,7 +284,7 @@ func (s *Server) ImportEntries(entries map[int64]comatproto.LabelDefs_Label) err
 	return nil
 }
 
-func splitInBatshes[T any](s []T, batchSize int) [][]T {
+func splitInBatches[T any](s []T, batchSize int) [][]T {
 	var r [][]T
 	for i := 0; i < len(s); i += batchSize {
 		if i+batchSize < len(s) {

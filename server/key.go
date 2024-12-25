@@ -11,12 +11,6 @@ import (
 // To maintain lexicographic ordering, each number must be encoded using
 // minimal possible number of bytes.
 
-func encodeKey(n int64) []byte {
-	v := big.NewInt(n)
-	b := v.Bytes()
-	return append([]byte{byte(len(b))}, b...)
-}
-
 func decodeKey(b []byte) (int64, error) {
 	if len(b) == 0 {
 		return 0, fmt.Errorf("empty key")

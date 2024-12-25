@@ -4,6 +4,7 @@ import "github.com/bluesky-social/indigo/api/bsky"
 
 type Config struct {
 	DBFile     string                           `yaml:"db_file"`
+	SQLiteDB   string                           `yaml:"sqlite_db"`
 	DID        string                           `yaml:"did"`
 	PrivateKey string                           `yaml:"private_key"`
 	Password   string                           `yaml:"password"`

@@ -1,9 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
-	bolt "go.etcd.io/bbolt"
+	"gorm.io/gorm"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
 
@@ -63,6 +62,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 	log := zerolog.Ctx(ctx)
 
 	conn.EnableWriteCompression(true)
+	defer conn.Close()
 
 	wakeCh := make(chan struct{}, 1)
 
@@ -77,64 +77,59 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 		s.mu.Unlock()
 	}()
 
-	var lastKey []byte
+	var lastKey int64
 	if cursor >= 0 {
 		futureCursor := false
-		err := s.db.View(func(tx *bolt.Tx) error {
-			c := tx.Bucket([]byte(bucketName)).Cursor()
-			key, value := c.Seek(encodeKey(cursor))
-			if key == nil {
-				futureCursor = true
-				return nil
-			}
-			if !bytes.Equal(key, encodeKey(cursor)) && len(value) > 0 {
-				if err := s.sendLabel(ctx, conn, key, value); err != nil {
-					return err
-				}
-			}
-			lastKey = slices.Clone(key)
-			for key, value = c.Next(); key != nil; key, value = c.Next() {
-				if len(value) == 0 {
-					continue
-				}
-				if err := s.sendLabel(ctx, conn, key, value); err != nil {
-					return err
-				}
-				lastKey = slices.Clone(key)
-			}
-			return nil
-		})
-		if err != nil {
+		if empty, err := s.IsEmpty(); err != nil {
+			log.Error().Err(err).Msgf("Failed to check if DB is empty: %s", err)
 			return
+		} else if !empty {
+			var labelCount int64
+			err := s.db.Model(&Entry{}).Where("seq >= ?", cursor).Count(&labelCount).Error
+			if err != nil {
+				log.Error().Err(err).Msgf("Failed to check if the cursor is valid: %s", err)
+				return
+			}
+			futureCursor = labelCount == 0
+		} else if empty {
+			futureCursor = cursor > 0
 		}
+
 		if futureCursor {
 			err := conn.WriteMessage(websocket.BinaryMessage, []byte("\xa1bop \xa1eerrorlFutureCursor"))
 			if err != nil {
 				log.Warn().Err(err).Msgf("Failed to send FutureCursor error to the client: %s", err)
 			}
-			err = conn.Close()
-			if err != nil {
-				log.Warn().Err(err).Msgf("conn.Close() returned an error: %s", err)
-			}
 			return
 		}
-	} else {
-		err := s.db.View(func(tx *bolt.Tx) error {
-			c := tx.Bucket([]byte(bucketName)).Cursor()
-			lastKey, _ = c.Last()
-			lastKey = slices.Clone(lastKey)
+
+		var entries []Entry
+		err := s.db.Model(&entries).Where("seq > ?", cursor).Order("seq asc").FindInBatches(&entries, 100, func(tx *gorm.DB, batch int) error {
+			for _, e := range entries {
+				if err := s.sendLabel(ctx, conn, e.Seq, e.ToLabel()); err != nil {
+					return err
+				}
+				lastKey = e.Seq
+			}
 			return nil
 		})
 		if err != nil {
-			log.Error().Err(err).Msgf("Failed to get the last key from the database: %s", err)
-			conn.Close()
 			return
+		}
+	} else {
+		err := s.db.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				lastKey = 0
+			} else {
+				log.Error().Err(err).Msgf("Failed to query last existing key: %s", err)
+				return
+			}
 		}
 	}
 	err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
 	if err != nil {
 		log.Error().Err(err).Msgf("Ping failed: %s", err)
-		conn.Close()
 		return
 	}
 
@@ -147,55 +142,35 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 			err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
 			if err != nil {
 				log.Error().Err(err).Msgf("Ping failed: %s", err)
-				conn.Close()
 				return
 			}
 		case <-wakeCh:
 			log.Trace().Msgf("Waking up")
-			err := s.db.View(func(tx *bolt.Tx) error {
-				c := tx.Bucket([]byte(bucketName)).Cursor()
-				var key, value []byte
-				if lastKey != nil {
-					key, value = c.Seek(lastKey)
-					if bytes.Equal(key, lastKey) {
-						// We've already sent this label, so advance to the next one.
-						key, value = c.Next()
-					}
-				} else {
-					key, value = c.First()
-				}
-				for ; key != nil; key, value = c.Next() {
-					if err := s.sendLabel(ctx, conn, key, value); err != nil {
+			var entries []Entry
+			err := s.db.Model(&entries).Where("seq > ?", cursor).Order("seq asc").FindInBatches(&entries, 100, func(tx *gorm.DB, batch int) error {
+				for _, e := range entries {
+					if err := s.sendLabel(ctx, conn, e.Seq, e.ToLabel()); err != nil {
 						return err
 					}
-					lastKey = slices.Clone(key)
+					lastKey = e.Seq
 				}
 				return nil
 			})
 			if err != nil {
-				conn.Close()
 				return
 			}
 		}
 	}
 }
 
-func (s *Server) sendLabel(ctx context.Context, conn *websocket.Conn, key []byte, value []byte) error {
-	label := &comatproto.LabelDefs_Label{}
-	if err := json.Unmarshal(value, label); err != nil {
-		return err
-	}
-	if err := sign.Sign(ctx, s.privateKey, label); err != nil {
+func (s *Server) sendLabel(ctx context.Context, conn *websocket.Conn, seq int64, label comatproto.LabelDefs_Label) error {
+	if err := sign.Sign(ctx, s.privateKey, &label); err != nil {
 		return err
 	}
 
-	seq, err := decodeKey(key)
-	if err != nil {
-		return err
-	}
 	msg := &comatproto.LabelSubscribeLabels_Labels{
 		Seq:    seq,
-		Labels: []*comatproto.LabelDefs_Label{label},
+		Labels: []*comatproto.LabelDefs_Label{&label},
 	}
 
 	w, err := conn.NextWriter(websocket.BinaryMessage)

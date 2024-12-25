@@ -18,7 +18,6 @@ import (
 
 	"bsky.watch/labeler/config"
 	"bsky.watch/labeler/server"
-	"bsky.watch/labeler/sign"
 )
 
 var (
@@ -41,14 +40,7 @@ func runMain(ctx context.Context) error {
 		return fmt.Errorf("parsing config file: %w", err)
 	}
 
-	// Technically we don't need the key to write labels, but it's easier
-	// to pass it here, than modify the server to allow nil key.
-	key, err := sign.ParsePrivateKey(config.PrivateKey)
-	if err != nil {
-		return fmt.Errorf("parsing private key: %w", err)
-	}
-
-	server, err := server.New(ctx, config.DBFile, config.DID, key)
+	server, err := server.NewWithConfig(ctx, config)
 	if err != nil {
 		return fmt.Errorf("instantiating a server: %w", err)
 	}

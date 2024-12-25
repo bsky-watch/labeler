@@ -16,7 +16,6 @@ import (
 	"bsky.watch/labeler/config"
 	"bsky.watch/labeler/logging"
 	"bsky.watch/labeler/server"
-	"bsky.watch/labeler/sign"
 	"bsky.watch/labeler/simpleapi"
 )
 
@@ -41,14 +40,7 @@ func runMain(ctx context.Context) error {
 	if err := yaml.Unmarshal(b, config); err != nil {
 		return fmt.Errorf("parsing config file: %w", err)
 	}
-	config.UpdateLabelValues()
-
-	key, err := sign.ParsePrivateKey(config.PrivateKey)
-	if err != nil {
-		return fmt.Errorf("parsing private key: %w", err)
-	}
-
-	server, err := server.New(ctx, config.DBFile, config.DID, key)
+	server, err := server.NewWithConfig(ctx, config)
 	if err != nil {
 		return fmt.Errorf("instantiating a server: %w", err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/Jille/convreq"
@@ -56,36 +55,25 @@ func (q *queryRequestGet) Validate() error {
 	return nil
 }
 
-func (q *queryRequestGet) Match(entry *Entry) bool {
-	if len(q.Sources) > 0 {
-		if !slices.Contains(q.Sources, entry.Src) {
-			return false
-		}
-	}
-	return slices.Contains(q.UriPatterns, entry.Uri)
-}
-
 func (s *Server) query(ctx context.Context, get queryRequestGet) ([]Entry, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := []Entry{}
-	for _, p := range get.UriPatterns {
-		for src, uriLabels := range s.labels {
-			if len(get.Sources) > 0 && !slices.Contains(get.Sources, src) {
-				continue
-			}
-			// Taking advantage of the fact that we don't allow any wildcards at all.
-			// So we can just do a plain map lookup.
-			for _, labels := range uriLabels[p] {
-				for _, entry := range labels {
-					if get.Match(&entry) {
-						result = append(result, entry)
-					}
-				}
-			}
-		}
+	var entries []Entry
+	var err error
+	if len(get.Sources) == 0 {
+		err = s.db.Model(&entries).
+			Where("uri in ?", get.UriPatterns).
+			Order("seq asc").
+			Find(&entries).Error
+	} else {
+		err = s.db.Model(&entries).
+			Where("uri in ? and src in ?", get.UriPatterns, get.Sources).
+			Order("seq asc").
+			Find(&entries).Error
 	}
-	return result, nil
+	if err != nil {
+		return nil, err
+	}
+
+	return dedupeAndNegateEntries(entries), nil
 }
 
 // Query returns HTTP handler that implements [com.atproto.label.queryLabels](https://docs.bsky.app/docs/api/com-atproto-label-query-labels) XRPC method.
@@ -103,12 +91,15 @@ func (s *Server) Query() http.Handler {
 			return respond.InternalServerError("failed to query labels")
 		}
 
+		var r []comatproto.LabelDefs_Label
 		for i := range result {
-			if err := sign.Sign(ctx, s.privateKey, (*comatproto.LabelDefs_Label)(&result[i])); err != nil {
+			l := result[i].ToLabel()
+			if err := sign.Sign(ctx, s.privateKey, &l); err != nil {
 				return respond.InternalServerError("failed to sign the labels")
 			}
+			r = append(r, l)
 		}
 
-		return respond.JSON(map[string]any{"labels": result})
+		return respond.JSON(map[string]any{"labels": r})
 	})
 }
