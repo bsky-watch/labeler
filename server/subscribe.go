@@ -163,7 +163,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 					subscriberCursor.WithLabelValues(s.did, remoteAddr).Set(float64(lastKey))
 				}
 				return nil
-			})
+			}).Error
 			if err != nil {
 				return
 			}
