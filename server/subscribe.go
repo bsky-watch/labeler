@@ -140,7 +140,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 		return
 	}
 
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 
 	for {
