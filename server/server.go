@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
 
@@ -69,7 +72,16 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 }
 
 func newWithSQLite(ctx context.Context, dbpath string, did string, privateKey *secec.PrivateKey) (*Server, error) {
-	db, err := gorm.Open(sqlite.Open(dbpath), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dbpath), &gorm.Config{
+		SkipDefaultTransaction: true,
+		PrepareStmt:            true,
+		Logger: logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+			SlowThreshold:             10 * time.Second,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: false,
+			Colorful:                  true,
+		}),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to DB: %w", err)
 	}
