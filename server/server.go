@@ -96,6 +96,12 @@ func newWithSQLite(ctx context.Context, dbpath string, did string, privateKey *s
 		privateKey: privateKey,
 	}
 
+	var lastKey int64
+	err = db.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to query last existing key: %w", err)
+	}
+	highestKey.WithLabelValues(s.did).Set(float64(lastKey))
 	activeSubscriptions.WithLabelValues(s.did).Set(0)
 
 	return s, nil

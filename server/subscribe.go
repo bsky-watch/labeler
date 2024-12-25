@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -53,12 +54,13 @@ func (s *Server) Subscribe() http.Handler {
 			log.Debug().Err(err).Msgf("Connection upgrade failed: %s", err)
 			return
 		}
-		s.streamLabels(log.WithContext(ctx), c, cursor)
+		remote = strings.SplitN(remote, ",", 2)[0]
+		s.streamLabels(log.WithContext(ctx), c, cursor, remote)
 		log.Debug().Msgf("Connection closed")
 	})
 }
 
-func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor int64) {
+func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor int64, remoteAddr string) {
 	log := zerolog.Ctx(ctx)
 
 	conn.EnableWriteCompression(true)
@@ -71,6 +73,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 	activeSubscriptions.WithLabelValues(s.did).Set(float64(len(s.wakeChans)))
 	s.mu.Unlock()
 	defer func() {
+		subscriberCursor.DeleteLabelValues(s.did, remoteAddr)
 		s.mu.Lock()
 		s.wakeChans = slices.DeleteFunc(s.wakeChans, func(ch chan struct{}) bool { return ch == wakeCh })
 		activeSubscriptions.WithLabelValues(s.did).Set(float64(len(s.wakeChans)))
@@ -103,6 +106,8 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 			return
 		}
 
+		subscriberCursor.WithLabelValues(s.did, remoteAddr).Set(float64(cursor))
+
 		var entries []Entry
 		err := s.db.Model(&entries).Where("seq > ?", cursor).Order("seq asc").FindInBatches(&entries, 100, func(tx *gorm.DB, batch int) error {
 			for _, e := range entries {
@@ -110,6 +115,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 					return err
 				}
 				lastKey = e.Seq
+				subscriberCursor.WithLabelValues(s.did, remoteAddr).Set(float64(lastKey))
 			}
 			return nil
 		})
@@ -126,6 +132,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 				return
 			}
 		}
+		subscriberCursor.WithLabelValues(s.did, remoteAddr).Set(float64(lastKey))
 	}
 	err := conn.WriteControl(websocket.PingMessage, []byte("ping"), time.Now().Add(5*time.Second))
 	if err != nil {
@@ -153,6 +160,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 						return err
 					}
 					lastKey = e.Seq
+					subscriberCursor.WithLabelValues(s.did, remoteAddr).Set(float64(lastKey))
 				}
 				return nil
 			})

@@ -9,10 +9,11 @@ import (
 
 func (s *Server) writeLabel(newLabel Entry) (bool, error) {
 	updated := false
+	lastKey := int64(0)
 	for i := 0; i < 5; i++ {
 		err := immediateTransaction(s.db, func(tx *gorm.DB) error {
 			updated = false
-			lastKey := int64(0)
+			lastKey = 0
 			err := tx.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("failed to query last existing key: %w", err)
@@ -54,6 +55,9 @@ func (s *Server) writeLabel(newLabel Entry) (bool, error) {
 		})
 		if err != nil {
 			continue
+		}
+		if updated {
+			highestKey.WithLabelValues(s.did).Set(float64(lastKey + 1))
 		}
 		return updated, nil
 	}
