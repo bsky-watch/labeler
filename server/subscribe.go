@@ -155,7 +155,7 @@ func (s *Server) streamLabels(ctx context.Context, conn *websocket.Conn, cursor 
 		case <-wakeCh:
 			log.Trace().Msgf("Waking up")
 			var entries []Entry
-			err := s.db.Model(&entries).Where("seq > ?", cursor).Order("seq asc").FindInBatches(&entries, 100, func(tx *gorm.DB, batch int) error {
+			err := s.db.Model(&entries).Where("seq > ?", lastKey).Order("seq asc").FindInBatches(&entries, 100, func(tx *gorm.DB, batch int) error {
 				for _, e := range entries {
 					if err := s.sendLabel(ctx, conn, e.Seq, e.ToLabel()); err != nil {
 						return err
