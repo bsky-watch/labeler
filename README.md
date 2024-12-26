@@ -46,7 +46,12 @@ you have `labels` set up the way you want them, and that `did` and `password` ar
 
 ## Migrating from Ozone
 
-WARNING: this wasn't tested yet on any live instance, please report any issues if you do this.
+> [!WARNING]
+> This wasn't tested yet on any live instance, please report any issues if you do this.
+
+> [!WARNING]
+> I reiterate - there's no web UI of any kind in this repo, you need to bring
+> your own before switching from Ozone if you plan to do any manual labeling.
 
 `cmd/clone` implements making a copy of a labeler with the same sequence numbers, so cursor values
 any consumers have will remain valid and point to the same data.
