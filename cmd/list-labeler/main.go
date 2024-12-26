@@ -11,6 +11,7 @@ import (
 
 	"github.com/bluesky-social/indigo/api/atproto"
 	"github.com/bluesky-social/indigo/xrpc"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 
@@ -26,6 +27,7 @@ import (
 var (
 	configFile     = flag.String("config", "config.yaml", "Path to the config file")
 	listenAddr     = flag.String("listen-addr", ":8081", "IP:port to listen on")
+	metricsAddr    = flag.String("metrics-addr", "", "IP:port to export metrics on")
 	logFile        = flag.String("log-file", "", "File to write the logs to. Will use stderr if not set")
 	logFormat      = flag.String("log-format", "text", "Log entry format, 'text' or 'json'.")
 	logLevel       = flag.Int("log-level", 1, "Log level. 0 - debug, 1 - info, 3 - error")
@@ -70,6 +72,17 @@ func runMain(ctx context.Context) error {
 	}
 
 	startListUpdates(ctx, client, config, server, *updateInterval)
+
+	if *metricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+
+		go func() {
+			if err := http.ListenAndServe(*metricsAddr, mux); err != nil {
+				log.Fatal().Err(err).Msgf("Failed to start listening on metrics address: %s", err)
+			}
+		}()
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/xrpc/com.atproto.label.subscribeLabels", server.Subscribe())

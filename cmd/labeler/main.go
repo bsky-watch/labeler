@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"gopkg.in/yaml.v3"
 
@@ -20,12 +21,13 @@ import (
 )
 
 var (
-	configFile = flag.String("config", "config.yaml", "Path to the config file")
-	listenAddr = flag.String("listen-addr", ":8081", "IP:port to listen on")
-	adminAddr  = flag.String("admin-addr", "", "IP:port to listen on with admin API")
-	logFile    = flag.String("log-file", "", "File to write the logs to. Will use stderr if not set")
-	logFormat  = flag.String("log-format", "text", "Log entry format, 'text' or 'json'.")
-	logLevel   = flag.Int("log-level", 1, "Log level. 0 - debug, 1 - info, 3 - error")
+	configFile  = flag.String("config", "config.yaml", "Path to the config file")
+	listenAddr  = flag.String("listen-addr", ":8081", "IP:port to listen on")
+	adminAddr   = flag.String("admin-addr", "", "IP:port to listen on with admin API")
+	metricsAddr = flag.String("metrics-addr", "", "IP:port to export metrics on")
+	logFile     = flag.String("log-file", "", "File to write the logs to. Will use stderr if not set")
+	logFormat   = flag.String("log-format", "text", "Log entry format, 'text' or 'json'.")
+	logLevel    = flag.Int("log-level", 1, "Log level. 0 - debug, 1 - info, 3 - error")
 )
 
 func runMain(ctx context.Context) error {
@@ -63,6 +65,17 @@ func runMain(ctx context.Context) error {
 		go func() {
 			if err := http.ListenAndServe(*adminAddr, mux); err != nil {
 				log.Fatal().Err(err).Msgf("Failed to start listening on admin API address: %s", err)
+			}
+		}()
+	}
+
+	if *metricsAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+
+		go func() {
+			if err := http.ListenAndServe(*metricsAddr, mux); err != nil {
+				log.Fatal().Err(err).Msgf("Failed to start listening on metrics address: %s", err)
 			}
 		}()
 	}
