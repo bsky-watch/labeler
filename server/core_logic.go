@@ -11,7 +11,7 @@ func (s *Server) writeLabel(newLabel Entry) (bool, error) {
 	updated := false
 	lastKey := int64(0)
 	for i := 0; i < 5; i++ {
-		err := immediateTransaction(s.db, func(tx *gorm.DB) error {
+		err := s.db.Transaction(func(tx *gorm.DB) error {
 			updated = false
 			lastKey = 0
 			err := tx.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
