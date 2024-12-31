@@ -74,7 +74,7 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 			migrator = m
 		}
 		if migrator != nil {
-			if err := migrateOldData(ctx, migrator, cfg); err != nil {
+			if err := migrateOldDataToPostgres(ctx, migrator, cfg); err != nil {
 				return nil, fmt.Errorf("migrating data from old DB: %w", err)
 			}
 		}
@@ -89,7 +89,7 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 			migrator = m
 		}
 		if migrator != nil {
-			if err := migrateOldData(ctx, migrator, cfg); err != nil {
+			if err := migrateOldDataToSQLite(ctx, migrator, cfg); err != nil {
 				return nil, fmt.Errorf("migrating data from old DB: %w", err)
 			}
 		}
@@ -183,13 +183,84 @@ func newWithSQLite(ctx context.Context, dbpath string, did string, privateKey *s
 	return s, nil
 }
 
-func migrateOldData(ctx context.Context, source migrationAdapter, cfg *config.Config) error {
+func migrateOldDataToPostgres(ctx context.Context, source migrationAdapter, cfg *config.Config) error {
 	oldLastKey, err := source.LastKey(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to read the last key from old DB: %w", err)
 	}
 
-	newDb, err := gorm.Open(sqlite.Open(cfg.SQLiteDB))
+	dbCfg, err := pgxpool.ParseConfig(cfg.PostgresURL)
+	if err != nil {
+		return fmt.Errorf("parsing DB URL: %w", err)
+	}
+	dbCfg.MaxConns = 1024
+	dbCfg.MinConns = 3
+	dbCfg.MaxConnLifetime = 6 * time.Hour
+	conn, err := pgxpool.NewWithConfig(ctx, dbCfg)
+	if err != nil {
+		return fmt.Errorf("connecting to postgres: %w", err)
+	}
+
+	sqldb := stdlib.OpenDBFromPool(conn)
+
+	newDb, err := gorm.Open(postgres.New(postgres.Config{
+		Conn: sqldb,
+	}), &gorm.Config{
+		SkipDefaultTransaction: true,
+		PrepareStmt:            true,
+		Logger: gormzerolog.New(&logger.Config{
+			SlowThreshold:             3 * time.Second,
+			IgnoreRecordNotFoundError: true,
+		}, nil),
+	})
+	if err != nil {
+		return fmt.Errorf("connecting to the database: %w", err)
+	}
+	if err := newDb.AutoMigrate(&Entry{}); err != nil {
+		return fmt.Errorf("failed to update DB schema: %w", err)
+	}
+
+	var lastKey int64
+	err = newDb.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("failed to query last existing key: %w", err)
+	}
+	if oldLastKey <= lastKey {
+		// No migration needed.
+		// XXX: we don't check if the labels in SQLite are actually the same.
+		return nil
+	}
+	if lastKey != 0 {
+		return fmt.Errorf("new DB is not empty and old DB has more entries than the new one. Not sure how to proceed")
+	}
+
+	labels, err := source.GetLabels(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to read the labels from the old DB: %w", err)
+	}
+
+	dummyServer := &Server{
+		db: newDb,
+	}
+
+	// This will fail if newDB is not empty.
+	return dummyServer.ImportEntries(labels)
+}
+
+func migrateOldDataToSQLite(ctx context.Context, source migrationAdapter, cfg *config.Config) error {
+	oldLastKey, err := source.LastKey(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to read the last key from old DB: %w", err)
+	}
+
+	newDb, err := gorm.Open(sqlite.Open(cfg.SQLiteDB), &gorm.Config{
+		SkipDefaultTransaction: true,
+		PrepareStmt:            true,
+		Logger: gormzerolog.New(&logger.Config{
+			SlowThreshold:             10 * time.Second,
+			IgnoreRecordNotFoundError: false,
+		}, nil),
+	})
 	if err != nil {
 		return fmt.Errorf("failed to open the new DB: %w", err)
 	}
