@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/imax9000/gormzerolog"
 	bolt "go.etcd.io/bbolt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	comatproto "github.com/bluesky-social/indigo/api/atproto"
 )
@@ -88,7 +90,14 @@ type sqliteAdapter struct {
 }
 
 func newSqliteAdapter(ctx context.Context, path string) (migrationAdapter, error) {
-	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{
+		SkipDefaultTransaction: true,
+		PrepareStmt:            true,
+		Logger: gormzerolog.New(&logger.Config{
+			SlowThreshold:             10 * time.Second,
+			IgnoreRecordNotFoundError: false,
+		}, nil),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to DB: %w", err)
 	}
