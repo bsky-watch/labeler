@@ -3,13 +3,14 @@ package config
 import "github.com/bluesky-social/indigo/api/bsky"
 
 type Config struct {
-	DBFile     string                           `yaml:"db_file"`
-	SQLiteDB   string                           `yaml:"sqlite_db"`
-	DID        string                           `yaml:"did"`
-	PrivateKey string                           `yaml:"private_key"`
-	Password   string                           `yaml:"password"`
-	Endpoint   string                           `yaml:"endpoint"`
-	Labels     bsky.LabelerDefs_LabelerPolicies `yaml:"labels"`
+	DBFile      string                           `yaml:"db_file"`
+	SQLiteDB    string                           `yaml:"sqlite_db"`
+	PostgresURL string                           `yaml:"postgres_url"`
+	DID         string                           `yaml:"did"`
+	PrivateKey  string                           `yaml:"private_key"`
+	Password    string                           `yaml:"password"`
+	Endpoint    string                           `yaml:"endpoint"`
+	Labels      bsky.LabelerDefs_LabelerPolicies `yaml:"labels"`
 }
 
 // UpdateLabelValues ensures that all labels defined in c.Labels.LabelValueDefinitions

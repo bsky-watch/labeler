@@ -15,15 +15,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
-	"os"
 	"slices"
 	"sync"
 	"time"
 
 	"golang.org/x/exp/maps"
 
+	"github.com/imax9000/gormzerolog"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"gitlab.com/yawning/secp256k1-voi/secec"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -56,6 +58,27 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 	}
 
 	switch {
+	case cfg.PostgresURL != "":
+		var migrator migrationAdapter
+		if cfg.DBFile != "" {
+			m, err := newBoltAdapter(ctx, cfg.DBFile)
+			if err != nil {
+				return nil, fmt.Errorf("creating migration adapter: %w", err)
+			}
+			migrator = m
+		} else if cfg.SQLiteDB != "" {
+			m, err := newSqliteAdapter(ctx, cfg.SQLiteDB)
+			if err != nil {
+				return nil, fmt.Errorf("creating migration adapter: %w", err)
+			}
+			migrator = m
+		}
+		if migrator != nil {
+			if err := migrateOldData(ctx, migrator, cfg); err != nil {
+				return nil, fmt.Errorf("migrating data from old DB: %w", err)
+			}
+		}
+		return newServer(ctx, cfg.PostgresURL, cfg.DID, key)
 	case cfg.SQLiteDB != "":
 		var migrator migrationAdapter
 		if cfg.DBFile != "" {
@@ -76,16 +99,64 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 	}
 }
 
+func newServer(ctx context.Context, dbUrl string, did string, privateKey *secec.PrivateKey) (*Server, error) {
+	dbCfg, err := pgxpool.ParseConfig(dbUrl)
+	if err != nil {
+		return nil, fmt.Errorf("parsing DB URL: %w", err)
+	}
+	dbCfg.MaxConns = 1024
+	dbCfg.MinConns = 3
+	dbCfg.MaxConnLifetime = 6 * time.Hour
+	conn, err := pgxpool.NewWithConfig(ctx, dbCfg)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to postgres: %w", err)
+	}
+
+	sqldb := stdlib.OpenDBFromPool(conn)
+
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		Conn: sqldb,
+	}), &gorm.Config{
+		SkipDefaultTransaction: true,
+		PrepareStmt:            true,
+		Logger: gormzerolog.New(&logger.Config{
+			SlowThreshold:             3 * time.Second,
+			IgnoreRecordNotFoundError: true,
+		}, nil),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connecting to the database: %w", err)
+	}
+
+	if err := db.AutoMigrate(&Entry{}); err != nil {
+		return nil, fmt.Errorf("failed to update DB schema: %w", err)
+	}
+
+	s := &Server{
+		db:         db,
+		did:        did,
+		privateKey: privateKey,
+	}
+
+	var lastKey int64
+	err = db.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to query last existing key: %w", err)
+	}
+	highestKey.WithLabelValues(s.did).Set(float64(lastKey))
+	activeSubscriptions.WithLabelValues(s.did).Set(0)
+
+	return s, nil
+}
+
 func newWithSQLite(ctx context.Context, dbpath string, did string, privateKey *secec.PrivateKey) (*Server, error) {
 	db, err := gorm.Open(sqlite.Open(dbpath), &gorm.Config{
 		SkipDefaultTransaction: true,
 		PrepareStmt:            true,
-		Logger: logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		Logger: gormzerolog.New(&logger.Config{
 			SlowThreshold:             10 * time.Second,
-			LogLevel:                  logger.Warn,
 			IgnoreRecordNotFoundError: false,
-			Colorful:                  true,
-		}),
+		}, nil),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to DB: %w", err)
