@@ -24,6 +24,7 @@ import (
 	"github.com/imax9000/gormzerolog"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/rs/zerolog"
 	"gitlab.com/yawning/secp256k1-voi/secec"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
@@ -50,6 +51,7 @@ type Server struct {
 
 // NewWithConfig creates a new server instance using parameters provided in the config.
 func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
+	log := zerolog.Ctx(ctx)
 	cfg.UpdateLabelValues()
 
 	key, err := sign.ParsePrivateKey(cfg.PrivateKey)
@@ -74,6 +76,7 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 			migrator = m
 		}
 		if migrator != nil {
+			log.Info().Msgf("Found an old database specified in the config file, checking if migration is needed...")
 			if err := migrateOldDataToPostgres(ctx, migrator, cfg); err != nil {
 				return nil, fmt.Errorf("migrating data from old DB: %w", err)
 			}
@@ -89,6 +92,7 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 			migrator = m
 		}
 		if migrator != nil {
+			log.Info().Msgf("Found an old database specified in the config file, checking if migration is needed...")
 			if err := migrateOldDataToSQLite(ctx, migrator, cfg); err != nil {
 				return nil, fmt.Errorf("migrating data from old DB: %w", err)
 			}
@@ -184,6 +188,8 @@ func newWithSQLite(ctx context.Context, dbpath string, did string, privateKey *s
 }
 
 func migrateOldDataToPostgres(ctx context.Context, source migrationAdapter, cfg *config.Config) error {
+	log := zerolog.Ctx(ctx)
+
 	oldLastKey, err := source.LastKey(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to read the last key from old DB: %w", err)
@@ -228,11 +234,14 @@ func migrateOldDataToPostgres(ctx context.Context, source migrationAdapter, cfg 
 	if oldLastKey <= lastKey {
 		// No migration needed.
 		// XXX: we don't check if the labels in SQLite are actually the same.
+		log.Info().Msgf("No migration needed.")
 		return nil
 	}
 	if lastKey != 0 {
 		return fmt.Errorf("new DB is not empty and old DB has more entries than the new one. Not sure how to proceed")
 	}
+
+	log.Info().Msgf("Starting data migration...")
 
 	labels, err := source.GetLabels(ctx)
 	if err != nil {
@@ -248,6 +257,8 @@ func migrateOldDataToPostgres(ctx context.Context, source migrationAdapter, cfg 
 }
 
 func migrateOldDataToSQLite(ctx context.Context, source migrationAdapter, cfg *config.Config) error {
+	log := zerolog.Ctx(ctx)
+
 	oldLastKey, err := source.LastKey(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to read the last key from old DB: %w", err)
@@ -273,11 +284,14 @@ func migrateOldDataToSQLite(ctx context.Context, source migrationAdapter, cfg *c
 	if oldLastKey <= lastKey {
 		// No migration needed.
 		// XXX: we don't check if the labels in SQLite are actually the same.
+		log.Info().Msgf("No migration needed.")
 		return nil
 	}
 	if lastKey != 0 {
 		return fmt.Errorf("new DB is not empty and old DB has more entries than the new one. Not sure how to proceed")
 	}
+
+	log.Info().Msgf("Starting data migration...")
 
 	labels, err := source.GetLabels(ctx)
 	if err != nil {
