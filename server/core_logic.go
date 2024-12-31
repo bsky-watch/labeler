@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -52,7 +53,7 @@ func (s *Server) writeLabel(newLabel Entry) (bool, error) {
 
 			newLabel.Seq = lastKey + 1
 			return tx.Create(&newLabel).Error
-		})
+		}, &sql.TxOptions{Isolation: sql.LevelSerializable})
 		if err != nil {
 			continue
 		}

@@ -13,7 +13,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -25,7 +24,6 @@ import (
 	"golang.org/x/exp/maps"
 
 	"gitlab.com/yawning/secp256k1-voi/secec"
-	bolt "go.etcd.io/bbolt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -59,10 +57,17 @@ func NewWithConfig(ctx context.Context, cfg *config.Config) (*Server, error) {
 
 	switch {
 	case cfg.SQLiteDB != "":
+		var migrator migrationAdapter
 		if cfg.DBFile != "" {
-			err := migrateBoltToSQLite(ctx, cfg.DBFile, cfg.SQLiteDB)
+			m, err := newBoltAdapter(ctx, cfg.DBFile)
 			if err != nil {
-				return nil, fmt.Errorf("migrating data to sqlite: %w", err)
+				return nil, fmt.Errorf("creating migration adapter: %w", err)
+			}
+			migrator = m
+		}
+		if migrator != nil {
+			if err := migrateOldData(ctx, migrator, cfg); err != nil {
+				return nil, fmt.Errorf("migrating data from old DB: %w", err)
 			}
 		}
 		return newWithSQLite(ctx, cfg.SQLiteDB, cfg.DID, key)
@@ -107,81 +112,38 @@ func newWithSQLite(ctx context.Context, dbpath string, did string, privateKey *s
 	return s, nil
 }
 
-func migrateBoltToSQLite(ctx context.Context, boltDB string, sqliteDB string) error {
-	oldDB, err := bolt.Open(boltDB, 0600, &bolt.Options{
-		Timeout:  1 * time.Second,
-		ReadOnly: true,
-	})
+func migrateOldData(ctx context.Context, source migrationAdapter, cfg *config.Config) error {
+	oldLastKey, err := source.LastKey(ctx)
 	if err != nil {
-		return fmt.Errorf("opening old DB: %w", err)
-	}
-	var lastBoltKey int64
-	err = oldDB.View(func(tx *bolt.Tx) error {
-		c := tx.Bucket([]byte(boltBucketName)).Cursor()
-		k, _ := c.Last()
-		if k == nil {
-			return nil
-		}
-		n, err := decodeKey(k)
-		if err != nil {
-			return err
-		}
-		lastBoltKey = n
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("looking up last allocated key in the old DB: %w", err)
+		return fmt.Errorf("failed to read the last key from old DB: %w", err)
 	}
 
-	newDB, err := gorm.Open(sqlite.Open(sqliteDB), &gorm.Config{})
+	newDb, err := gorm.Open(sqlite.Open(cfg.SQLiteDB))
 	if err != nil {
-		return fmt.Errorf("failed to connect to DB: %w", err)
+		return fmt.Errorf("failed to open the new DB: %w", err)
 	}
-	if err := newDB.AutoMigrate(&Entry{}); err != nil {
-		return fmt.Errorf("failed to update DB schema: %w", err)
-	}
-	var lastSQLiteKey int64
-	err = newDB.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastSQLiteKey).Error
+
+	var lastKey int64
+	err = newDb.Model(&Entry{}).Select("seq").Order("seq desc").Limit(1).Pluck("seq", &lastKey).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return fmt.Errorf("failed to query last existing key: %w", err)
 	}
-
-	if lastBoltKey <= lastSQLiteKey {
+	if oldLastKey <= lastKey {
 		// No migration needed.
 		// XXX: we don't check if the labels in SQLite are actually the same.
 		return nil
 	}
-	if lastSQLiteKey != 0 {
+	if lastKey != 0 {
 		return fmt.Errorf("new DB is not empty and old DB has more entries than the new one. Not sure how to proceed")
 	}
 
-	labels := map[int64]comatproto.LabelDefs_Label{}
-	err = oldDB.View(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(boltBucketName)).ForEach(func(k, v []byte) error {
-			if len(v) == 0 {
-				// XXX: skipping empty padding entries, used only when replacing
-				// software for existing labeler.
-				return nil
-			}
-			n, err := decodeKey(k)
-			if err != nil {
-				return err
-			}
-			var label comatproto.LabelDefs_Label
-			if err := json.Unmarshal(v, &label); err != nil {
-				return err
-			}
-
-			labels[n] = label
-			return nil
-		})
-	})
+	labels, err := source.GetLabels(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to read entries from the old DB: %w", err)
+		return fmt.Errorf("failed to read the labels from the old DB: %w", err)
 	}
 
 	dummyServer := &Server{
-		db: newDB,
+		db: newDb,
 	}
 
 	// This will fail if newDB is not empty.
