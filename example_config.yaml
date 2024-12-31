@@ -1,10 +1,11 @@
-# Path to the database file. Required.
-# The file will be created if it doesn't exist yet.
-sqlite_db: /data/labels.sqlite
+# URL of the database. Required.
+postgres_url: "postgres://postgres:<password>@postgres/labels?sslmode=disable"
 
-# If you have a Bolt database from a previous version, you can specify it here
-# and on the first run it will be automatically migrated into SQLite.
+
+# If you have a Bolt or SQLite database from a previous version, you can specify it here
+# and on the first run it will be automatically migrated into PostgreSQL.
 # db_file: /data/labels.bolt
+# sqlite_db: /data/labels.sqlite
 
 # Label signing key. Required.
 # Same as with Ozone, generate with: openssl ecparam --name secp256k1 --genkey --noout --outform DER | tail --bytes=+8 | head --bytes=32 | xxd --plain --cols 32
