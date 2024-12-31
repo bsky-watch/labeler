@@ -6,3 +6,6 @@ LICENSE
 *.md
 .env
 *.env
+*.bolt
+*.sqlite
+postgres
