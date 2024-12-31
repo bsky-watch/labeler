@@ -312,6 +312,13 @@ func migrateOldDataToSQLite(ctx context.Context, source migrationAdapter, cfg *c
 // or trying to negate a label that doesn't exist). Return value indicates if
 // there was a change or not.
 func (s *Server) AddLabel(label comatproto.LabelDefs_Label) (bool, error) {
+	s.mu.Lock()
+	if len(s.allowedLabels) > 0 && !s.allowedLabels[label.Val] {
+		s.mu.Unlock()
+		return false, fmt.Errorf("we are not allowed to apply the label %q", label.Val)
+	}
+	s.mu.Unlock()
+
 	if label.Src == "" {
 		label.Src = s.did
 	}
