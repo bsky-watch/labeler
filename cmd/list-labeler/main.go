@@ -166,7 +166,7 @@ func updateFromList(ctx context.Context, client *xrpc.Client, server *server.Ser
 	log.Debug().Msgf("Adding %d and removing %d labels", len(toAdd), len(toRemove))
 
 	for did := range toAdd {
-		_, err := server.AddLabel(atproto.LabelDefs_Label{
+		_, err := server.AddLabel(ctx, atproto.LabelDefs_Label{
 			Uri: did,
 			Val: label,
 		})
@@ -177,7 +177,7 @@ func updateFromList(ctx context.Context, client *xrpc.Client, server *server.Ser
 	}
 	for did := range toRemove {
 		neg := true
-		_, err := server.AddLabel(atproto.LabelDefs_Label{
+		_, err := server.AddLabel(ctx, atproto.LabelDefs_Label{
 			Uri: did,
 			Val: label,
 			Neg: &neg,

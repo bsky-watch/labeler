@@ -18,11 +18,11 @@ func BenchmarkQuerySingleResult(b *testing.B) {
 	}
 
 	for i := 0; i < benchmarkDBSize/2; i++ {
-		server.AddLabel(atproto.LabelDefs_Label{Val: fmt.Sprintf("a%d", i), Uri: testDID})
+		server.AddLabel(ctx, atproto.LabelDefs_Label{Val: fmt.Sprintf("a%d", i), Uri: testDID})
 	}
-	server.AddLabel(atproto.LabelDefs_Label{Val: "label", Uri: otherDID})
+	server.AddLabel(ctx, atproto.LabelDefs_Label{Val: "label", Uri: otherDID})
 	for i := 0; i < benchmarkDBSize/2; i++ {
-		server.AddLabel(atproto.LabelDefs_Label{Val: fmt.Sprintf("b%d", i), Uri: testDID})
+		server.AddLabel(ctx, atproto.LabelDefs_Label{Val: fmt.Sprintf("b%d", i), Uri: testDID})
 	}
 
 	b.ResetTimer()

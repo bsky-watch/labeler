@@ -311,7 +311,7 @@ func migrateOldDataToSQLite(ctx context.Context, source migrationAdapter, cfg *c
 // Note that it will ignore values that have no effect (e.g., if the label already exists,
 // or trying to negate a label that doesn't exist). Return value indicates if
 // there was a change or not.
-func (s *Server) AddLabel(label comatproto.LabelDefs_Label) (bool, error) {
+func (s *Server) AddLabel(ctx context.Context, label comatproto.LabelDefs_Label) (bool, error) {
 	s.mu.Lock()
 	if len(s.allowedLabels) > 0 && !s.allowedLabels[label.Val] {
 		s.mu.Unlock()
@@ -333,7 +333,7 @@ func (s *Server) AddLabel(label comatproto.LabelDefs_Label) (bool, error) {
 	label.Sig = nil // We don't store signatures and always generate them on demand.
 
 	start := time.Now()
-	r, err := s.writeLabel(*(&Entry{}).FromLabel(0, label))
+	r, err := s.writeLabel(ctx, *(&Entry{}).FromLabel(0, label))
 	duration := time.Since(start)
 	if err != nil {
 		writeLatency.WithLabelValues(s.did, "error").Observe(duration.Seconds())

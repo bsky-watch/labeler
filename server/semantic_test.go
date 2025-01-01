@@ -179,7 +179,7 @@ func TestBasic(t *testing.T) {
 				if l.Uri == "" {
 					l.Uri = testDID
 				}
-				if _, err := server.AddLabel(l); err != nil {
+				if _, err := server.AddLabel(ctx, l); err != nil {
 					t.Fatal(err)
 				}
 			}
