@@ -253,7 +253,19 @@ func migrateOldDataToPostgres(ctx context.Context, source migrationAdapter, cfg 
 	}
 
 	// This will fail if newDB is not empty.
-	return dummyServer.ImportEntries(labels)
+	err = dummyServer.ImportEntries(labels)
+	if err != nil {
+		return err
+	}
+
+	var maxKey int64 = 0
+	for k := range labels {
+		if k > maxKey {
+			maxKey = k
+		}
+	}
+
+	return newDb.Exec("SELECT setval('log_seq_seq', ?)", maxKey).Error
 }
 
 func migrateOldDataToSQLite(ctx context.Context, source migrationAdapter, cfg *config.Config) error {
